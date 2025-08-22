@@ -11,10 +11,10 @@ import { DOPEPage } from './pages/DOPEpage';   // 👈 fix name & use named impo
 import LogPage from './pages/logPage';         // keep as-is unless it errors next             
 
 const routes = [
-  { path: '/equipment', component: <EquipmentPage /> },
+  { path: '/equipment',  component: <EquipmentPage /> },
   { path: '/calculator', component: <CalculatorPage /> },
-  { path: '/dope', component: <DOPEpage /> },
-  { path: '/log', component: <LogPage /> },
+  { path: '/dope',       component: <DOPEPage /> },   // 👈 match the name here too
+  { path: '/log',        component: <LogPage /> },
 ];
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
