@@ -5,10 +5,10 @@ import './index.css';
 import { Router } from './components/Router';
 
 // Pages
-import { EquipmentPage } from './pages/EquipmentPage';  
-import { CalculatorPage } from './pages/CalculatorPage';
-import { DOPEpage } from './pages/DOPEpage';                 
-import LogPage from './pages/logPage';                   
+import { EquipmentPage } from './pages/EquipmentPage';   // named export
+import { CalculatorPage } from './pages/CalculatorPage'; // named export
+import DOPEpage from './pages/DOPEpage';                 // DEFAULT export
+import LogPage from './pages/logPage';                   // DEFAULT export (keep unless error says otherwise)               
 
 const routes = [
   { path: '/equipment', component: <EquipmentPage /> },
