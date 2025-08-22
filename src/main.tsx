@@ -1,10 +1,10 @@
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import Router from './components/Router'; // 👈 default export from Router.tsx
+import './index.css';
 
-  import { createRoot } from "react-dom/client";
-  import Router from './components/Router';
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <Router />
+  <React.StrictMode>
+    <Router />
+  </React.StrictMode>
 );
-  import "./index.css";
-
-  createRoot(document.getElementById("root")!).render(<App />);
-  
