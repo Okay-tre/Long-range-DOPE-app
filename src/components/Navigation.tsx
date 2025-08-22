@@ -50,9 +50,9 @@ export function Navigation() {
               Equipment
             </button>
             <button
-              onClick={() => navigate('/calc')}
+              onClick={() => navigate('/calculator')}
               className={`px-4 py-2 text-sm font-medium transition-colors ${
-                isActive('/calc')
+                isActive('/calculator')
                   ? 'bg-white text-[#940000] font-semibold'
                   : 'text-white hover:bg-white/10'
               }`}
