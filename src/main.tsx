@@ -4,16 +4,15 @@ import './index.css';
 
 import { Router } from './components/Router';
 
-// Pages
 import { EquipmentPage } from './pages/EquipmentPage';
 import { CalculatorPage } from './pages/CalculatorPage';
-import { DOPEPage } from './pages/DOPEpage';   // 👈 fix name & use named import
-import LogPage from './pages/logPage';         // keep as-is unless it errors next             
+import { DOPEPage } from './pages/DOPEpage';
+import { LogPage } from './pages/logPage';   // 👈 switched to named import
 
 const routes = [
   { path: '/equipment',  component: <EquipmentPage /> },
   { path: '/calculator', component: <CalculatorPage /> },
-  { path: '/dope',       component: <DOPEPage /> },   // 👈 match the name here too
+  { path: '/dope',       component: <DOPEPage /> },
   { path: '/log',        component: <LogPage /> },
 ];
 
