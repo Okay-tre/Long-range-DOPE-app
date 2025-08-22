@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useApp } from "../contexts/AppContext";
-import { createEquipmentPreset, createBulletPreset, type ScopeUnits, type ModelKind } from "../lib/appStates";
+import { createEquipmentPreset, createBulletPreset, type ScopeUnits, type ModelKind } from "../lib/appState";
 import { EquipmentManager } from "../components/EquipmentManager";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
