@@ -11,7 +11,7 @@ const AppContext = createContext<AppContextType | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(loadState());
-  const [currentPath, setCurrentPath] = useState(window.location.hash.slice(1) || '/calc');
+  const [currentPath, setCurrentPath] = useState(window.location.hash.slice(1) || '/equipment');
 
   // Save to localStorage whenever state changes
   useEffect(() => {
@@ -21,7 +21,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Handle hash changes for navigation
   useEffect(() => {
     const handleHashChange = () => {
-      setCurrentPath(window.location.hash.slice(1) || '/calc');
+      setCurrentPath(window.location.hash.slice(1) || '/equipment');
     };
 
     window.addEventListener('hashchange', handleHashChange);
@@ -56,5 +56,5 @@ export function useApp() {
 
 // Legacy hook for current path (used by Router)
 export function useCurrentPath() {
-  return window.location.hash.slice(1) || '/calc';
+  return window.location.hash.slice(1) || '/equipment';
 }
