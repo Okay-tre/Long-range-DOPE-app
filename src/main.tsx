@@ -4,7 +4,7 @@ import './index.css';
 
 import { AppProvider } from './contexts/AppContext';
 import { Router } from './components/Router';
-import Navigation from './components/Navigation'; // ⬅️ you have this file
+import { Navigation } from './components/Navigation';
 
 import { EquipmentPage } from './pages/EquipmentPage';
 import { CalculatorPage } from './pages/CalculatorPage';
