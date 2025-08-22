@@ -17,30 +17,41 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-        - name: Build
-          run: npm run build
+      # 1) Get your code
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        - name: Detect build output
-          run: |
-              if [ -d dist ]; then echo "OUTPUT_DIR=dist" >> $GITHUB_ENV;
-              elif [ -d build ]; then echo "OUTPUT_DIR=build" >> $GITHUB_ENV;
-              elif [ -d docs ]; then echo "OUTPUT_DIR=docs" >> $GITHUB_ENV;
-              else echo "No build output folder found"; ls -la; exit 1; fi
+      # 2) Node for Vite
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-        - name: SPA fallback
-          run: |
-              if [ -f "${OUTPUT_DIR}/index.html" ]; then
-                cp "${OUTPUT_DIR}/index.html" "${OUTPUT_DIR}/404.html";
-              fi
+      # 3) Install deps
+      - name: Install deps
+        run: npm install
 
-        - name: Configure Pages
-          uses: actions/configure-pages@v5
+      # 4) Build (Vite outputs to dist)
+      - name: Build
+        run: npm run build
 
-        - name: Upload artifact
-          uses: actions/upload-pages-artifact@v3
-          with:
-            path: ${{ env.OUTPUT_DIR }}
+      # 5) SPA fallback (harmless for hash router, still fine)
+      - name: SPA fallback
+        run: |
+          if [ -f dist/index.html ]; then
+            cp dist/index.html dist/404.html
+          fi
+
+      # 6) Configure & upload artifact
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
 
   deploy:
     needs: build
