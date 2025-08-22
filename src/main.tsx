@@ -7,7 +7,7 @@ import { Router } from './components/Router';
 // Pages
 import { EquipmentPage } from './pages/EquipmentPage';  
 import { CalculatorPage } from './pages/CalculatorPage';
-import DOPEpage from './pages/DOPEpage';                 
+import { DOPEpage } from './pages/DOPEpage';                 
 import LogPage from './pages/logPage';                   
 
 const routes = [
