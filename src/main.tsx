@@ -3,9 +3,8 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 
 import { Router } from './components/Router';
-import { AppProvider } from './contexts/AppContext'; // ⬅️ add this (use default import if that's how it's exported)
+import { AppProvider } from './contexts/AppContext'; // 👈 named export
 
-// Pages
 import { EquipmentPage } from './pages/EquipmentPage';
 import { CalculatorPage } from './pages/CalculatorPage';
 import { DOPEPage } from './pages/DOPEpage';
