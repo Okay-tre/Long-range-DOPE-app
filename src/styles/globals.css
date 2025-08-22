@@ -1,0 +1,468 @@
+/* TODO: Add color schemes for different calculator themes */
+/* TODO: Implement high contrast mode for accessibility */
+/* TODO: Consider adding animation/transition tokens */
+
+@custom-variant dark (&:is(.dark *));
+
+/* TODO: Add CSS custom properties for ballistics-specific colors */
+/* TODO: Define spacing tokens for complex form layouts */
+/* TODO: Add focus ring colors for better accessibility */
+:root {
+  --font-size: 14px;
+  --background: #ffffff;
+  --foreground: oklch(0.145 0 0);
+  --card: #ffffff;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #030213;
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.0058 264.53);
+  --secondary-foreground: #030213;
+  --muted: #ececf0;
+  --muted-foreground: #717182;
+  --accent: #e9ebef;
+  --accent-foreground: #030213;
+  --destructive: #d4183d;
+  --destructive-foreground: #ffffff;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: transparent;
+  --input-background: #f3f3f5;
+  --switch-background: #cbced4;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: #030213;
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+  
+  /* Ballistics-specific header colors */
+  --header-background: #940000;
+  --header-foreground: #ffffff;
+  --header-border: rgba(255, 255, 255, 0.2);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.145 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.145 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.396 0.141 25.723);
+  --destructive-foreground: oklch(0.637 0.237 25.331);
+  --border: oklch(0.269 0 0);
+  --input: oklch(0.269 0 0);
+  --ring: oklch(0.439 0 0);
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(0.269 0 0);
+  --sidebar-ring: oklch(0.439 0 0);
+  
+  /* Dark mode header - keep same colors for consistency */
+  --header-background: #940000;
+  --header-foreground: #ffffff;
+  --header-border: rgba(255, 255, 255, 0.2);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  
+  /* Header color tokens */
+  --color-header-background: var(--header-background);
+  --color-header-foreground: var(--header-foreground);
+  --color-header-border: var(--header-border);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    border-radius: 0 !important;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/**
+ * Base typography. This is not applied to elements which have an ancestor with a Tailwind text class.
+ */
+@layer base {
+  :where(:not(:has([class*=" text-"]), :not(:has([class^="text-"])))) {
+    h1 {
+      font-size: var(--text-2xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h2 {
+      font-size: var(--text-xl);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h3 {
+      font-size: var(--text-lg);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    h4 {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    p {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+
+    label {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    button {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-medium);
+      line-height: 1.5;
+    }
+
+    input {
+      font-size: var(--text-base);
+      font-weight: var(--font-weight-normal);
+      line-height: 1.5;
+    }
+  }
+}
+
+html {
+  font-size: var(--font-size);
+}
+
+/* Override all border radius to achieve angular design */
+* {
+  border-radius: 0 !important;
+}
+
+/* Ballistics Header Styles */
+.ballistics-header {
+  background-color: var(--color-header-background);
+  color: var(--color-header-foreground);
+  border-bottom: 1px solid var(--color-header-border);
+}
+
+/* Focus styles for accessibility - applied directly in component */
+.ballistics-header a:focus-visible {
+  outline: 2px solid white;
+  outline-offset: -2px;
+}
+
+/* DOPE Table Session Header Styles */
+.dope-session-header {
+  background-color: var(--color-header-background) !important;
+  color: var(--color-header-foreground) !important;
+  font-weight: 500;
+  border-top: 2px solid var(--color-header-background);
+}
+
+.dope-session-header td {
+  padding: 12px 16px !important;
+  font-size: 14px !important;
+}
+
+.dope-session-header .session-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.dope-session-header .session-title {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.dope-session-header .session-meta {
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+/* Print styles for PDF export and printing */
+@media print {
+  @page {
+    margin: 0.5in;
+    size: landscape;
+  }
+  
+  body {
+    font-size: 12px;
+    line-height: 1.3;
+    color: #000;
+    background: #fff;
+  }
+  
+  .ballistics-header,
+  nav,
+  button,
+  .no-print {
+    display: none !important;
+  }
+  
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 10px;
+  }
+  
+  th, td {
+    border: 1px solid #000;
+    padding: 2px 4px;
+    text-align: left;
+  }
+  
+  th {
+    background-color: #f0f0f0;
+    font-weight: bold;
+  }
+  
+  tr:nth-child(even) {
+    background-color: #f9f9f9;
+  }
+  
+  .dope-session-header {
+    background-color: #940000 !important;
+    color: white !important;
+    font-weight: bold !important;
+    font-size: 12px !important;
+  }
+  
+  .print-header {
+    display: block;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+  
+  .print-title {
+    font-size: 18px;
+    font-weight: bold;
+    margin-bottom: 10px;
+  }
+  
+  .print-meta {
+    font-size: 12px;
+    color: #666;
+  }
+}
+
+/* PDF Export specific styles */
+.pdf-export-table {
+  font-family: 'Helvetica', sans-serif;
+  font-size: 8px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.pdf-export-table th {
+  background-color: #940000;
+  color: white;
+  font-weight: bold;
+  padding: 4px 2px;
+  text-align: center;
+  font-size: 7px;
+}
+
+.pdf-export-table td {
+  padding: 3px 2px;
+  border: 0.5px solid #ccc;
+  text-align: center;
+  font-size: 7px;
+}
+
+.pdf-export-table tr:nth-child(even) {
+  background-color: #f5f5f5;
+}
+
+.pdf-session-header {
+  background-color: #940000 !important;
+  color: white !important;
+  font-weight: bold !important;
+  font-size: 8px !important;
+}
+
+/* Responsive typography for smaller screens */
+@media (max-width: 768px) {
+  html {
+    font-size: 12px;
+  }
+  
+  .ballistics-header h1 {
+    font-size: 16px;
+  }
+  
+  table {
+    font-size: 10px;
+  }
+  
+  th, td {
+    padding: 4px 2px;
+  }
+  
+  .dope-session-header td {
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+  }
+  
+  .dope-session-header .session-info {
+    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  :root {
+    --border: #000;
+    --muted: #f0f0f0;
+    --muted-foreground: #000;
+  }
+  
+  .dark {
+    --border: #fff;
+    --muted: #333;
+    --muted-foreground: #fff;
+  }
+  
+  .dope-session-header {
+    border: 2px solid #000 !important;
+  }
+}
+
+/* Gray-themed calculation and adjustment sections */
+.calculation-results-section {
+  background: linear-gradient(135deg, #334155, #475569);
+  border: 1px solid #475569;
+  box-shadow: 0 4px 12px rgba(51, 65, 85, 0.15);
+}
+
+.calculation-results-section h3 {
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+/* Print styles for calculation sections */
+@media print {
+  .calculation-results-section {
+    background: #334155 !important;
+    color: white !important;
+    border: 2px solid #334155 !important;
+    box-shadow: none !important;
+  }
+}
+
+/* Responsive adjustments for calculation sections */
+@media (max-width: 768px) {
+  .calculation-results-section {
+    padding: 16px;
+  }
+}
+
+/* Remove number input spinners/arrows */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Prevent scrolling on number inputs */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Scope units highlighting - remove rounded corners */
+.scope-units-highlight {
+  border: 2px solid #334155;
+}
+
+.scope-units-label {
+  font-size: 16px; /* 2pt larger than base 14px */
+}
+
+/* TODO: Add utility classes for ballistics-specific layouts */
+/* TODO: Implement loading states and skeleton screens */
+/* TODO: Add error state styles for form validation */
