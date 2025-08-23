@@ -1,53 +1,63 @@
-import React, { useState } from "react";
+// src/components/Navigation.tsx
+import React, { useEffect, useState } from "react";
+import logo from "../assets/logo-bullet.png"; // keep or remove if you don't have it
 
-const pages = [
-  { path: "/equipment", label: "Equipment" },
-  { path: "/calc", label: "Ballistic Calculator" },
-  { path: "/log", label: "Log" },
-  { path: "/dope", label: "DOPE" },
-];
+const TAB = (href: string, label: string, currentPath: string) => {
+  const isActive = currentPath === href;
+  return (
+    <a
+      href={`#${href}`}
+      className={[
+        "px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition",
+        // active: white pill w/ red text, hover subtle
+        isActive
+          ? "bg-white text-[#8b0000]"
+          : "text-white/95 hover:bg-white/10 hover:text-white",
+      ].join(" ")}
+    >
+      {label}
+    </a>
+  );
+};
 
 export default function Navigation() {
   const [currentPath, setCurrentPath] = useState(
-    () => window.location.hash.slice(1) || "/equipment"
+    () => (window.location.hash.slice(1) || "/calc")
   );
 
-  const navigate = (path: string) => {
-    window.location.hash = path;
-    setCurrentPath(path);
-  };
+  useEffect(() => {
+    const onHash = () => setCurrentPath(window.location.hash.slice(1) || "/calc");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   return (
-    <nav className="bg-red-700 text-white shadow">
-      <div className="container mx-auto flex items-center justify-between px-4 py-3">
-        {/* Logo */}
-        <div className="flex items-center gap-2">
-          <img
-            src={`${import.meta.env.BASE_URL}logo-bullet.png`}
-            alt="Logo"
-            className="h-8 w-8"
-          />
-          <span className="font-bold text-lg">PCG Ballistics</span>
-        </div>
+    <nav className="bg-[#8b0000] text-white">
+      <div className="mx-auto max-w-6xl px-3 sm:px-4">
+        <div className="h-14 flex items-center justify-between gap-3">
+          {/* Left: logo + title */}
+          <div className="flex items-center gap-3 min-w-0">
+            {logo ? (
+              <img
+                src={logo}
+                alt="PCG Ballistics"
+                className="w-8 h-8 object-contain shrink-0"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-full bg-white/20" />
+            )}
+            <span className="truncate font-semibold">
+              Long Range DOPE Calculator
+            </span>
+          </div>
 
-        {/* Navigation links */}
-        <div className="flex gap-2">
-          {pages.map((page) => {
-            const isActive = currentPath === page.path;
-            return (
-              <button
-                key={page.path}
-                onClick={() => navigate(page.path)}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-white text-red-700 border border-red-700"
-                    : "bg-red-800 hover:bg-red-900 text-white"
-                }`}
-              >
-                {page.label}
-              </button>
-            );
-          })}
+          {/* Right: tabs */}
+          <div className="flex items-center gap-1 sm:gap-2">
+            {TAB("/equipment", "Equipment", currentPath)}
+            {TAB("/calc", "Calculator", currentPath)}
+            {TAB("/log", "Add Group", currentPath)}
+            {TAB("/dope", "Sessions & DOPE", currentPath)}
+          </div>
         </div>
       </div>
     </nav>
