@@ -9,8 +9,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Plus, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner@2.0.3";
 
+/* ---------- small helpers ---------- */
+
 function NumberInput({
-  id, label, value, onChange, step = "any", className = ""
+  id,
+  label,
+  value,
+  onChange,
+  step = "any",
+  className = "",
 }: {
   id: string;
   label: string;
@@ -21,7 +28,7 @@ function NumberInput({
 }) {
   return (
     <div className={className}>
-      <Label htmlFor={id}>{label}</Label>
+      <Label htmlFor={id} className="text-sm">{label}</Label>
       <Input
         id={id}
         type="number"
@@ -33,11 +40,15 @@ function NumberInput({
   );
 }
 
+/* =================================== */
+/*            Equipment Page           */
+/* =================================== */
+
 export function EquipmentPage() {
   const { state, setState } = useApp();
   const { weapons, selectedWeaponId, selectedAmmoId } = state;
 
-  /* ---------------- helpers ---------------- */
+  /* ---------- state mutators ---------- */
 
   const selectWeapon = (id: string | undefined) =>
     setState({ ...state, selectedWeaponId: id });
@@ -100,7 +111,7 @@ export function EquipmentPage() {
         w.id === weaponId ? { ...w, ammo: [...w.ammo, a] } : w
       ),
       selectedWeaponId: weaponId,
-      selectedAmmoId: a.id, // auto-expand the new ammo
+      selectedAmmoId: a.id, // auto-open the new ammo
     });
     toast.success("Ammo added");
   };
@@ -122,23 +133,22 @@ export function EquipmentPage() {
   };
 
   const saveAll = () => {
-    // state persistence is already handled in AppContext useEffect(saveState),
-    // but this gives the user a “done” action and ensures a state write
+    // persistence already happens via AppContext saveState effect; this forces a write + UX signal
     setState({ ...state });
     toast.success("Equipment saved");
   };
 
-  /* ---------------- render ---------------- */
+  /* ---------- render ---------- */
 
   return (
     <div className="container max-w-6xl mx-auto p-3 space-y-4">
-      {/* Header toolbar */}
-      <div className="flex items-center justify-between">
+      {/* Title + action bar (buttons UNDER the title) */}
+      <header className="mb-1">
         <div className="flex items-center gap-2">
           <Wrench className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-semibold">Equipment & Ammunition</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <Button onClick={addWeapon} size="sm">
             <Plus className="h-4 w-4 mr-1" /> Add Rifle
           </Button>
@@ -146,31 +156,27 @@ export function EquipmentPage() {
             Save All Changes
           </Button>
         </div>
-      </div>
+      </header>
 
       {/* Weapon list */}
       <div className="grid gap-3">
         {weapons.map((w) => {
           const isSelected = selectedWeaponId === w.id;
+
           return (
             <Card
               key={w.id}
               className={`transition-colors ${isSelected ? "ring-2 ring-primary" : ""}`}
               onClick={() => selectWeapon(w.id)}
             >
+              {/* Card header: title + delete */}
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-base truncate">{w.name || "Unnamed Rifle"}</CardTitle>
+                <CardTitle className="text-base truncate">
+                  {w.name || "Unnamed Rifle"}
+                </CardTitle>
+
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addAmmo(w.id);
-                    }}
-                  >
-                    <Plus className="h-3 w-3 mr-1" /> Add Ammo
-                  </Button>
+                  {/* Keep delete in the header */}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -185,13 +191,14 @@ export function EquipmentPage() {
                 </div>
               </CardHeader>
 
-              {/* Weapon body */}
-              <CardContent onClick={(e) => e.stopPropagation()}>
+              {/* Card body */}
+              <CardContent onClick={(e) => e.stopPropagation()} className="space-y-4">
+                {/* Rifle fields */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <Label htmlFor={`name-${w.id}`}>Rifle Name</Label>
+                    <Label htmlFor={`rifle-name-${w.id}`} className="text-sm">Rifle Name</Label>
                     <Input
-                      id={`name-${w.id}`}
+                      id={`rifle-name-${w.id}`}
                       value={w.name}
                       onChange={(e) => patchWeapon(w.id, { name: e.target.value })}
                       placeholder="e.g., Remington 700"
@@ -216,13 +223,13 @@ export function EquipmentPage() {
                   </div>
 
                   <div>
-                    <Label>Scope Units</Label>
+                    <Label className="text-sm">Scope Units</Label>
                     <Select
                       value={w.scopeUnits}
                       onValueChange={(val) => patchWeapon(w.id, { scopeUnits: val as Weapon["scopeUnits"] })}
                     >
-                      <SelectTrigger>
-                        <SelectValue />
+                      <SelectTrigger aria-label="Scope Units">
+                        <SelectValue placeholder="Select units" />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="MIL">MIL</SelectItem>
@@ -233,11 +240,15 @@ export function EquipmentPage() {
                 </div>
 
                 {/* Ammo list */}
-                <div className="mt-4">
+                <section className="mt-2">
                   <h3 className="font-medium text-sm mb-2">Ammunition</h3>
+
                   {w.ammo.length === 0 && (
-                    <div className="text-xs text-muted-foreground">No ammo yet. Click “Add Ammo”.</div>
+                    <div className="text-xs text-muted-foreground">
+                      No ammo yet. Click “Add Ammo”.
+                    </div>
                   )}
+
                   <div className="grid gap-2">
                     {w.ammo.map((a) => {
                       const open = selectedAmmoId === a.id;
@@ -251,35 +262,46 @@ export function EquipmentPage() {
                             <CardTitle className="text-sm truncate">
                               {a.name || a.ammoName || "Load"}
                             </CardTitle>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  removeAmmo(w.id, a.id);
-                                }}
-                                aria-label="Delete ammo"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeAmmo(w.id, a.id);
+                              }}
+                              aria-label="Delete ammo"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </CardHeader>
 
                           {open && (
-                            <CardContent onClick={(e) => e.stopPropagation()} className="space-y-3">
-                              <Input
-                                value={a.name}
-                                onChange={(e) => patchAmmo(w.id, a.id, { name: e.target.value })}
-                                placeholder="Load name (optional)"
-                              />
+                            <CardContent
+                              onClick={(e) => e.stopPropagation()}
+                              className="space-y-3"
+                            >
+                              <div>
+                                <Label htmlFor={`ammo-name-${a.id}`} className="text-sm">
+                                  Load Name (optional)
+                                </Label>
+                                <Input
+                                  id={`ammo-name-${a.id}`}
+                                  value={a.name}
+                                  onChange={(e) =>
+                                    patchAmmo(w.id, a.id, { name: e.target.value })
+                                  }
+                                  placeholder="e.g., 140 ELD-M handload"
+                                />
+                              </div>
 
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                 <NumberInput
                                   id={`bw-${a.id}`}
                                   label="Bullet Weight (gr)"
                                   value={a.bulletWeightGr}
-                                  onChange={(v) => patchAmmo(w.id, a.id, { bulletWeightGr: v })}
+                                  onChange={(v) =>
+                                    patchAmmo(w.id, a.id, { bulletWeightGr: v })
+                                  }
                                 />
                                 <NumberInput
                                   id={`mv-${a.id}`}
@@ -288,12 +310,14 @@ export function EquipmentPage() {
                                   onChange={(v) => patchAmmo(w.id, a.id, { V0: v })}
                                 />
                                 <div>
-                                  <Label>Drag Model</Label>
+                                  <Label className="text-sm">Drag Model</Label>
                                   <Select
                                     value={a.model}
-                                    onValueChange={(val) => patchAmmo(w.id, a.id, { model: val as any })}
+                                    onValueChange={(val) =>
+                                      patchAmmo(w.id, a.id, { model: val as any })
+                                    }
                                   >
-                                    <SelectTrigger>
+                                    <SelectTrigger aria-label="Drag Model">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -317,20 +341,26 @@ export function EquipmentPage() {
                                   id={`zero-${a.id}`}
                                   label="Zero Distance (m)"
                                   value={a.zeroDistanceM}
-                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroDistanceM: v })}
+                                  onChange={(v) =>
+                                    patchAmmo(w.id, a.id, { zeroDistanceM: v })
+                                  }
                                 />
                                 <NumberInput
                                   id={`sh-${a.id}`}
                                   label="Scope Height (mm)"
                                   value={a.scopeHeightMm}
-                                  onChange={(v) => patchAmmo(w.id, a.id, { scopeHeightMm: v })}
+                                  onChange={(v) =>
+                                    patchAmmo(w.id, a.id, { scopeHeightMm: v })
+                                  }
                                 />
                                 <NumberInput
                                   id={`zt-${a.id}`}
                                   label="Zero Temp (°C)"
                                   value={a.zeroEnv.temperatureC}
                                   onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { zeroEnv: { ...a.zeroEnv, temperatureC: v } })
+                                    patchAmmo(w.id, a.id, {
+                                      zeroEnv: { ...a.zeroEnv, temperatureC: v },
+                                    })
                                   }
                                 />
                                 <NumberInput
@@ -338,7 +368,9 @@ export function EquipmentPage() {
                                   label="Zero Pressure (hPa)"
                                   value={a.zeroEnv.pressurehPa}
                                   onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { zeroEnv: { ...a.zeroEnv, pressurehPa: v } })
+                                    patchAmmo(w.id, a.id, {
+                                      zeroEnv: { ...a.zeroEnv, pressurehPa: v },
+                                    })
                                   }
                                 />
                                 <NumberInput
@@ -346,7 +378,9 @@ export function EquipmentPage() {
                                   label="Zero Humidity (%)"
                                   value={a.zeroEnv.humidityPct}
                                   onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { zeroEnv: { ...a.zeroEnv, humidityPct: v } })
+                                    patchAmmo(w.id, a.id, {
+                                      zeroEnv: { ...a.zeroEnv, humidityPct: v },
+                                    })
                                   }
                                 />
                                 <NumberInput
@@ -354,7 +388,9 @@ export function EquipmentPage() {
                                   label="Zero Altitude (m)"
                                   value={a.zeroEnv.altitudeM ?? 0}
                                   onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { zeroEnv: { ...a.zeroEnv, altitudeM: v } })
+                                    patchAmmo(w.id, a.id, {
+                                      zeroEnv: { ...a.zeroEnv, altitudeM: v },
+                                    })
                                   }
                                 />
                               </div>
@@ -364,7 +400,21 @@ export function EquipmentPage() {
                       );
                     })}
                   </div>
-                </div>
+
+                  {/* Bottom-left Add Ammo button */}
+                  <div className="mt-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        addAmmo(w.id);
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-1" /> Add Ammo
+                    </Button>
+                  </div>
+                </section>
               </CardContent>
             </Card>
           );
