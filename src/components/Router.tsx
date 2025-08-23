@@ -1,46 +1,50 @@
-import { useState, useEffect, ReactNode } from 'react';
+// src/components/Router.tsx
+import React, { useEffect, useMemo, useState, ReactNode } from "react";
 
-type Route = {
-  path: string;
+export type Route = {
+  path: string;        // e.g. "/calc"
   component: ReactNode;
 };
 
 type RouterProps = {
   routes: Route[];
-  defaultPath?: string;
+  defaultPath?: string; // fallback when hash is empty or unknown
 };
 
-export function Router({ routes, defaultPath = '/equipment' }: RouterProps) {
-  const [currentPath, setCurrentPath] = useState(() => {
-    // Get initial path from hash or use default
+const normalize = (p: string) => (p.startsWith("/") ? p : `/${p}`);
+
+export function Router({ routes, defaultPath = "/calc" }: RouterProps) {
+  const getPath = () => {
     const hash = window.location.hash.slice(1);
-    return hash || defaultPath;
-  });
+    return normalize(hash || defaultPath);
+  };
+
+  const [currentPath, setCurrentPath] = useState<string>(getPath);
 
   useEffect(() => {
-    // Update path when hash changes
-    const handleHashChange = () => {
-      const hash = window.location.hash.slice(1);
-      setCurrentPath(hash || defaultPath);
+    const onHashChange = () => {
+      const next = getPath();
+      setCurrentPath(next);
+      // scroll to top on "route change"
+      window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
     };
-
-    // Listen for hash changes
-    window.addEventListener('hashchange', handleHashChange);
-    
-    // Clean up listener
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultPath]);
 
-  // Find matching route
-  const currentRoute = routes.find(route => route.path === currentPath);
-  
-  // If no route matches, show the default route
-  const routeToRender = currentRoute || routes.find(route => route.path === defaultPath);
+  // Exact match only
+  const routeToRender = useMemo(
+    () => routes.find((r) => normalize(r.path) === currentPath) ??
+          routes.find((r) => normalize(r.path) === normalize(defaultPath)) ??
+          routes[0],
+    [routes, currentPath, defaultPath]
+  );
 
   return <>{routeToRender?.component}</>;
 }
 
-// Helper function for navigation
+// Programmatic navigation helper
 export function navigate(path: string) {
-  window.location.hash = path;
+  window.location.hash = normalize(path);
 }
