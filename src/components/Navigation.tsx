@@ -7,11 +7,10 @@ export function Navigation() {
   });
   const [open, setOpen] = useState(false);
 
-  // keep active state in sync with URL hash
   useEffect(() => {
     const onHash = () => {
       setCurrentPath(window.location.hash.slice(1) || '/equipment');
-      setOpen(false); // close mobile menu after navigation
+      setOpen(false);
     };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
@@ -20,6 +19,7 @@ export function Navigation() {
   const navigate = (path: string) => {
     window.location.hash = path;
   };
+
   const isActive = (path: string) => currentPath === path;
 
   return (
@@ -28,10 +28,9 @@ export function Navigation() {
       aria-label="Primary"
       className="sticky top-0 z-50 border-b bg-[#940000] text-white"
     >
-      {/* Top bar */}
       <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6">
         <div className="flex h-14 items-center gap-3 sm:gap-4 md:gap-6">
-          {/* Brand */}
+          {/* Logo + Title */}
           <a
             href="#/equipment"
             className="flex min-w-0 items-center gap-2"
@@ -41,7 +40,7 @@ export function Navigation() {
             }}
           >
             <img
-              src={`${import.meta.env.BASE_URL}logo.png`} // put file in /public/logo.png
+              src={`${import.meta.env.BASE_URL}logo.png`} // ensure file exists at /public/logo.png
               alt="PCG Ballistics Logo"
               className="h-7 w-7 shrink-0 object-contain"
             />
@@ -54,26 +53,10 @@ export function Navigation() {
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-1">
-            <NavButton
-              label="Equipment"
-              active={isActive('/equipment')}
-              onClick={() => navigate('/equipment')}
-            />
-            <NavButton
-              label="Calculator"
-              active={isActive('/calculator')}
-              onClick={() => navigate('/calculator')}
-            />
-            <NavButton
-              label="Add Group"
-              active={isActive('/log')}
-              onClick={() => navigate('/log')}
-            />
-            <NavButton
-              label="Sessions & DOPE"
-              active={isActive('/dope')}
-              onClick={() => navigate('/dope')}
-            />
+            <NavButton label="Equipment" active={isActive('/equipment')} onClick={() => navigate('/equipment')} />
+            <NavButton label="Calculator" active={isActive('/calculator')} onClick={() => navigate('/calculator')} />
+            <NavButton label="Add Group" active={isActive('/log')} onClick={() => navigate('/log')} />
+            <NavButton label="Sessions & DOPE" active={isActive('/dope')} onClick={() => navigate('/dope')} />
           </div>
 
           {/* Mobile hamburger */}
@@ -94,26 +77,10 @@ export function Navigation() {
       {/* Mobile menu */}
       <div className={`md:hidden border-t border-white/10 ${open ? 'block' : 'hidden'}`}>
         <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6 py-2 flex gap-2 overflow-x-auto">
-          <MobileButton
-            label="Equipment"
-            active={isActive('/equipment')}
-            onClick={() => navigate('/equipment')}
-          />
-          <MobileButton
-            label="Calculator"
-            active={isActive('/calculator')}
-            onClick={() => navigate('/calculator')}
-          />
-          <MobileButton
-            label="Add Group"
-            active={isActive('/log')}
-            onClick={() => navigate('/log')}
-          />
-          <MobileButton
-            label="Sessions & DOPE"
-            active={isActive('/dope')}
-            onClick={() => navigate('/dope')}
-          />
+          <MobileButton label="Equipment" active={isActive('/equipment')} onClick={() => navigate('/equipment')} />
+          <MobileButton label="Calculator" active={isActive('/calculator')} onClick={() => navigate('/calculator')} />
+          <MobileButton label="Add Group" active={isActive('/log')} onClick={() => navigate('/log')} />
+          <MobileButton label="Sessions & DOPE" active={isActive('/dope')} onClick={() => navigate('/dope')} />
         </div>
       </div>
     </nav>
@@ -134,9 +101,9 @@ function NavButton({
   return (
     <button
       onClick={onClick}
-      className={`rounded-md px-3 py-2 text-sm transition-colors ${
-        active ? 'bg-white text-[#940000] font-semibold' : 'hover:bg-white/10'
-      }`}
+      className={`rounded-md px-3 py-2 text-sm transition-colors
+        ${active ? 'bg-white text-[#940000] font-semibold' : 'text-white hover:bg-white/10'}
+      `}
     >
       {label}
     </button>
@@ -155,9 +122,9 @@ function MobileButton({
   return (
     <button
       onClick={onClick}
-      className={`whitespace-nowrap rounded-md px-3 py-2 text-sm ${
-        active ? 'bg-white text-[#940000] font-semibold' : 'bg-white/10'
-      }`}
+      className={`whitespace-nowrap rounded-md px-3 py-2 text-sm
+        ${active ? 'bg-white text-[#940000] font-semibold' : 'text-white bg-white/10'}
+      `}
     >
       {label}
     </button>
