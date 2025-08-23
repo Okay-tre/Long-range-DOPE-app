@@ -7,27 +7,26 @@ export function Navigation() {
   });
   const [open, setOpen] = useState(false);
 
+  // keep active state in sync with URL hash
   useEffect(() => {
-    const handleHashChange = () => {
-      const hash = window.location.hash.slice(1);
-      setCurrentPath(hash || '/equipment');
+    const onHash = () => {
+      setCurrentPath(window.location.hash.slice(1) || '/equipment');
       setOpen(false); // close mobile menu after navigation
     };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
   const navigate = (path: string) => {
     window.location.hash = path;
   };
-
   const isActive = (path: string) => currentPath === path;
 
   return (
     <nav
       role="navigation"
       aria-label="Primary"
-      className="sticky top-0 z-50 bg-[#940000] text-white border-b border-black/20"
+      className="sticky top-0 z-50 border-b bg-[#940000] text-white"
     >
       {/* Top bar */}
       <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6">
@@ -35,7 +34,7 @@ export function Navigation() {
           {/* Brand */}
           <a
             href="#/equipment"
-            className="flex items-center gap-2 min-w-0"
+            className="flex min-w-0 items-center gap-2"
             onClick={(e) => {
               e.preventDefault();
               navigate('/equipment');
@@ -51,10 +50,9 @@ export function Navigation() {
             </span>
           </a>
 
-          {/* Spacer */}
           <div className="flex-1" />
 
-          {/* Desktop buttons */}
+          {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-1">
             <NavButton
               label="Equipment"
@@ -78,29 +76,24 @@ export function Navigation() {
             />
           </div>
 
-          {/* Mobile menu toggle */}
+          {/* Mobile hamburger */}
           <button
             type="button"
-            aria-label="Open menu"
+            aria-label="Toggle menu"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
             className="md:hidden inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-white/40"
           >
-            {/* simple hamburger icon */}
-            <svg viewBox="0 0 24 24" className="h-6 w-6 fill-current">
-              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16" />
             </svg>
           </button>
         </div>
       </div>
 
-      {/* Mobile menu (collapsible) */}
-      <div
-        className={`md:hidden overflow-x-auto border-t border-white/10 ${
-          open ? 'block' : 'hidden'
-        }`}
-      >
-        <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6 py-2 flex gap-2">
+      {/* Mobile menu */}
+      <div className={`md:hidden border-t border-white/10 ${open ? 'block' : 'hidden'}`}>
+        <div className="mx-auto max-w-6xl px-3 sm:px-4 md:px-6 py-2 flex gap-2 overflow-x-auto">
           <MobileButton
             label="Equipment"
             active={isActive('/equipment')}
@@ -127,7 +120,7 @@ export function Navigation() {
   );
 }
 
-/* --- Small presentational helpers --- */
+/* ---------------- helpers ---------------- */
 
 function NavButton({
   label,
@@ -141,9 +134,9 @@ function NavButton({
   return (
     <button
       onClick={onClick}
-      className={`px-3 py-2 text-sm rounded-md transition-colors
-        ${active ? 'bg-white text-[#940000] font-semibold' : 'hover:bg-white/10'}
-      `}
+      className={`rounded-md px-3 py-2 text-sm transition-colors ${
+        active ? 'bg-white text-[#940000] font-semibold' : 'hover:bg-white/10'
+      }`}
     >
       {label}
     </button>
@@ -162,9 +155,9 @@ function MobileButton({
   return (
     <button
       onClick={onClick}
-      className={`whitespace-nowrap rounded-md px-3 py-2 text-sm
-        ${active ? 'bg-white text-[#940000] font-semibold' : 'bg-white/10'}
-      `}
+      className={`whitespace-nowrap rounded-md px-3 py-2 text-sm ${
+        active ? 'bg-white text-[#940000] font-semibold' : 'bg-white/10'
+      }`}
     >
       {label}
     </button>
