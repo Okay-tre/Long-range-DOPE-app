@@ -11,12 +11,15 @@ import { CalculatorPage } from './pages/CalculatorPage';
 import { DOPEPage } from './pages/DOPEpage';
 import { LogPage } from './pages/logPage';
 
-const routes = [
-  { path: '/equipment',  component: <EquipmentPage /> },
-  { path: '/calculator', component: <CalculatorPage /> },
-  { path: '/dope',       component: <DOPEPage /> },
-  { path: '/log',        component: <LogPage /> },
-];
+<Router
+  routes={[
+    { path: "/equipment", component: <EquipmentPage /> },
+    { path: "/calc",      component: <CalculatorPage /> },
+    { path: "/log",       component: <LogPage /> },
+    { path: "/dope",      component: <DOPEPage /> },
+  ]}
+  defaultPath="/calc"
+/>
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
