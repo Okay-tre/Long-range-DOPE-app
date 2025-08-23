@@ -1,7 +1,8 @@
 /* Types + defaults + persistence helpers. UI should call these. */
 import { enhancedStorage } from './indexedDB';
 
-// Helper functions for preset management
+// ---------------- Helper functions for presets ----------------
+
 export function createEquipmentPreset(data: Omit<EquipmentPreset, 'id' | 'createdAt'>): EquipmentPreset {
   return {
     ...data,
@@ -41,15 +42,56 @@ export function applyBulletPreset(calculator: CalculatorState, preset: BulletPre
   };
 }
 
+// ---------------- Core types ----------------
+
 export type ModelKind = "noDrag" | "G1" | "G7";
 export type ScopeUnits = "MIL" | "MOA";
+
+/** Snapshot of environment values */
+export type Environment = {
+  temperatureC: number;
+  pressurehPa: number;
+  humidityPct: number;
+  altitudeM?: number;
+};
+
+/** A specific ammo profile tied to a weapon */
+export type AmmoProfile = {
+  id: string;
+  name: string;
+  ammoName: string;
+  bulletWeightGr: number;
+  bc: number;
+  model: ModelKind;
+  V0: number;
+  zeroDistanceM: number;
+  scopeHeightMm: number;
+  mvTempSensitivity?: number;
+  zeroEnv: Environment;
+  notes?: string;
+  createdAt?: string;
+};
+
+/** A weapon with its ammo list */
+export type Weapon = {
+  id: string;
+  name: string;
+  scopeUnits: ScopeUnits;
+  barrelLengthIn: number;
+  twistRateIn: number;
+  ammo: AmmoProfile[];
+  notes?: string;
+  createdAt?: string;
+};
+
+// ---------------- Existing preset types ----------------
 
 export type EquipmentPreset = {
   id: string;
   name: string;
   firearmName: string;
-  y0Cm: number; // Height over bore in centimeters
-  zeroDistanceM: number; // Zero distance in meters
+  y0Cm: number;
+  zeroDistanceM: number;
   scopeUnits: ScopeUnits;
   barrelLengthIn: number;
   twistRateIn: number;
@@ -62,30 +104,29 @@ export type BulletPreset = {
   name: string;
   ammoName: string;
   bulletWeightGr: number;
-  bc: number; // Ballistic coefficient
-  model: ModelKind; // Drag model
-  V0: number; // Muzzle velocity
+  bc: number;
+  model: ModelKind;
+  V0: number;
   manufacturer?: string;
   notes?: string;
   createdAt: string;
 };
 
 export type CalculatorState = {
-  V0: number; thetaDeg: number; X: number; y0Cm: number; // Changed y0 to y0Cm for centimeters
-  model: ModelKind; bc: number; // Single BC field that applies to chosen model
-  bulletWeightGr: number; // Bullet weight in grains
-  // Weather inputs instead of atmosMode/rho
-  temperature: number; // Celsius
-  humidity: number; // Percentage (0-100)
-  windSpeed: number; // m/s
-  windDirection: number; // degrees (0-359, 0 = headwind, 180 = tailwind)
+  V0: number; thetaDeg: number; X: number; y0Cm: number;
+  model: ModelKind; bc: number;
+  bulletWeightGr: number;
+  temperature: number;
+  humidity: number;
+  windSpeed: number;
+  windDirection: number;
   firearmName: string; ammoName: string; barrelLengthIn: number; twistRateIn: number;
   scopeUnits: ScopeUnits;
-  zeroDistanceM: number; // Zero distance in meters
+  zeroDistanceM: number;
   lastResult?: {
     modelUsed: ModelKind; tFlight: number; vImpact: number; drop: number; holdMil: number; holdMoa: number;
-    rhoUsed: number; // Calculated air density for reference
-    windDrift?: number; // Wind drift in meters
+    rhoUsed: number;
+    windDrift?: number;
   };
 };
 
@@ -99,20 +140,20 @@ export type Session = {
 export type Entry = {
   id: string; sessionId: string; createdAt: string;
   rangeM: number; model: ModelKind; bcUsed: number | null; rho: number;
-  V0: number; thetaDeg: number; y0Cm: number; // Changed from y0 to y0Cm
-  bulletWeightGr: number; // Bullet weight in grains
+  V0: number; thetaDeg: number; y0Cm: number;
+  bulletWeightGr: number;
   firearmName: string; ammoName: string; barrelLengthIn: number; twistRateIn: number;
-  // Weather conditions at time of shot
   temperature: number; humidity: number; windSpeed: number; windDirection: number;
   offsetUpCm: number; offsetRightCm: number; groupSizeCm?: number | null; shots?: number | null;
   suggestedAdjMil: { up: number; right: number; };
   suggestedAdjMoa: { up: number; right: number; };
-  // Actual scope adjustments made (optional)
   actualAdjMil?: { up: number; right: number; } | null;
   actualAdjMoa?: { up: number; right: number; } | null;
-  zeroDistanceM?: number; // Zero distance used for this entry (for backward compatibility)
+  zeroDistanceM?: number;
   notes: string;
 };
+
+// ---------------- App state ----------------
 
 export type AppState = { 
   calculator: CalculatorState; 
@@ -120,9 +161,16 @@ export type AppState = {
   entries: Entry[]; 
   equipmentPresets: EquipmentPreset[];
   bulletPresets: BulletPreset[];
+
+  /** New structured weapon/ammo model */
+  weapons: Weapon[];
+  selectedWeaponId?: string;
+  selectedAmmoId?: string;
 };
 
 const LS_KEY = "ballistics-dope-v1";
+
+// ---------------- Defaults ----------------
 
 function createDefaultSession(): Session {
   return {
@@ -136,42 +184,37 @@ function createDefaultSession(): Session {
 export function defaultState(): AppState {
   return {
     calculator: {
-      V0: 800, thetaDeg: 2, X: 300, y0Cm: 3.5, // Height over bore in cm
-      model: "G7", bc: 0.25, // Single BC value
-      bulletWeightGr: 175, // Default bullet weight
-      temperature: 15, // Standard temperature (15°C)
-      humidity: 0, // Standard humidity (0%)
-      windSpeed: 0, // No wind
-      windDirection: 0, // Headwind direction
+      V0: 800, thetaDeg: 2, X: 300, y0Cm: 3.5,
+      model: "G7", bc: 0.25,
+      bulletWeightGr: 175,
+      temperature: 15,
+      humidity: 0,
+      windSpeed: 0,
+      windDirection: 0,
       firearmName: "", ammoName: "", barrelLengthIn: 20, twistRateIn: 8,
-      scopeUnits: "MIL", // Default to MIL
-      zeroDistanceM: 100, // Default zero distance 100m
+      scopeUnits: "MIL",
+      zeroDistanceM: 100,
     },
     session: createDefaultSession(),
     entries: [],
     equipmentPresets: [],
     bulletPresets: [],
+    weapons: [],
+    selectedWeaponId: undefined,
+    selectedAmmoId: undefined,
   };
 }
 
-/**
- * Load state with enhanced storage system
- * First tries IndexedDB, falls back to localStorage if needed
- */
+// ---------------- Persistence ----------------
+
 export function loadState(): AppState {
   try {
-    // Try to get from enhanced storage (synchronous for backward compatibility)
     const raw = enhancedStorage.getItem(LS_KEY);
     if (!raw) {
-      // Also check for the old localStorage key directly
       const localStorageRaw = localStorage.getItem(LS_KEY);
-      if (!localStorageRaw) {
-        return defaultState();
-      }
-      // Use localStorage data but don't migrate yet (will happen in async init)
+      if (!localStorageRaw) return defaultState();
       return parseAndMigrateState(localStorageRaw);
     }
-    
     return parseAndMigrateState(raw);
   } catch (error) {
     console.warn('Failed to load state, using defaults:', error);
@@ -179,18 +222,11 @@ export function loadState(): AppState {
   }
 }
 
-/**
- * Load state asynchronously (preferred method for new code)
- */
 export async function loadStateAsync(): Promise<AppState> {
   try {
     await enhancedStorage.init();
     const raw = await enhancedStorage.getItemAsync(LS_KEY);
-    
-    if (!raw) {
-      return defaultState();
-    }
-    
+    if (!raw) return defaultState();
     return parseAndMigrateState(raw);
   } catch (error) {
     console.warn('Failed to load state async, using defaults:', error);
@@ -198,70 +234,56 @@ export async function loadStateAsync(): Promise<AppState> {
   }
 }
 
-/**
- * Parse and migrate state data with all necessary transformations
- */
 function parseAndMigrateState(raw: string): AppState {
   try {
     const parsed = JSON.parse(raw);
-    const defaultStateValue = defaultState();
-    
-    // Ensure we have a valid session with migration for place field
+    const defaults = defaultState();
+
+    // ensure session exists
     let session = parsed.session;
-    if (!session || !session.id || !session.startedAt || !session.title) {
+    if (!session || !session.id) {
       session = createDefaultSession();
-    } else {
-      // Migrate existing sessions to include place field
-      if (!session.place) {
-        session.place = "";
-      }
+    } else if (!session.place) {
+      session.place = "";
     }
-    
-    // Migrate calculator state for new weather-based structure
+
+    // migrate calculator
     let calculator = parsed.calculator;
     if (calculator) {
-      // Migrate old structure to new
       if (calculator.bcG1 !== undefined || calculator.bcG7 !== undefined) {
-        // Old structure - convert to new
         calculator.bc = calculator.model === "G1" ? calculator.bcG1 || 0.45 : calculator.bcG7 || 0.25;
         delete calculator.bcG1;
         delete calculator.bcG7;
       }
-      
-      // Migrate atmosMode/rho to weather
       if (calculator.atmosMode !== undefined) {
         calculator.temperature = calculator.temperature || 15;
         calculator.humidity = calculator.humidity || 0;
         delete calculator.atmosMode;
         delete calculator.rho;
       }
-      
-      // Migrate y0 to y0Cm
       if (calculator.y0 !== undefined) {
-        calculator.y0Cm = calculator.y0 * 100; // Convert m to cm
+        calculator.y0Cm = calculator.y0 * 100;
         delete calculator.y0;
       }
-      
-      // Remove gravity field
       if (calculator.g !== undefined) {
         delete calculator.g;
       }
-      
-      // Add missing fields with defaults
       calculator.windSpeed = calculator.windSpeed || 0;
       calculator.windDirection = calculator.windDirection || 0;
-      calculator.bulletWeightGr = calculator.bulletWeightGr || 175; // Default bullet weight
-      calculator.scopeUnits = calculator.scopeUnits || "MIL"; // Default scope units
-      calculator.zeroDistanceM = calculator.zeroDistanceM || 100; // Default zero distance
+      calculator.bulletWeightGr = calculator.bulletWeightGr || 175;
+      calculator.scopeUnits = calculator.scopeUnits || "MIL";
+      calculator.zeroDistanceM = calculator.zeroDistanceM || 100;
     }
-    
-    // Merge with defaults to ensure all required fields exist
+
     return {
-      calculator: { ...defaultStateValue.calculator, ...calculator },
+      calculator: { ...defaults.calculator, ...calculator },
       session,
       entries: Array.isArray(parsed.entries) ? parsed.entries : [],
       equipmentPresets: Array.isArray(parsed.equipmentPresets) ? parsed.equipmentPresets : [],
       bulletPresets: Array.isArray(parsed.bulletPresets) ? parsed.bulletPresets : [],
+      weapons: Array.isArray(parsed.weapons) ? parsed.weapons : [],
+      selectedWeaponId: parsed.selectedWeaponId ?? undefined,
+      selectedAmmoId: parsed.selectedAmmoId ?? undefined,
     };
   } catch (error) {
     console.warn('Failed to parse state data:', error);
@@ -269,16 +291,11 @@ function parseAndMigrateState(raw: string): AppState {
   }
 }
 
-/**
- * Save state with enhanced storage system
- * Uses async IndexedDB by default, with localStorage fallback
- */
+// ---------------- Save helpers ----------------
+
 export function saveState(s: AppState): void {
   try {
-    // Save synchronously to localStorage for immediate persistence
     localStorage.setItem(LS_KEY, JSON.stringify(s));
-    
-    // Also save asynchronously to IndexedDB for better durability
     enhancedStorage.setItem(LS_KEY, JSON.stringify(s)).catch(error => {
       console.warn('Failed to save to IndexedDB, localStorage backup succeeded:', error);
     });
@@ -287,9 +304,6 @@ export function saveState(s: AppState): void {
   }
 }
 
-/**
- * Save state asynchronously (preferred method for new code)
- */
 export async function saveStateAsync(s: AppState): Promise<void> {
   try {
     await enhancedStorage.setItem(LS_KEY, JSON.stringify(s));
@@ -304,9 +318,8 @@ export async function saveStateAsync(s: AppState): Promise<void> {
   }
 }
 
-/**
- * Get storage statistics and information
- */
+// ---------------- Other utilities (unchanged) ----------------
+
 export async function getStorageInfo(): Promise<{
   enhanced: { count: number; totalSize: number; oldestTimestamp?: number; newestTimestamp?: number };
   localStorage: { size: number; available: boolean };
@@ -314,20 +327,17 @@ export async function getStorageInfo(): Promise<{
 }> {
   try {
     await enhancedStorage.init();
-    
     const enhancedStats = await enhancedStorage.getStats();
-    
-    // Check localStorage
+
     let localStorageSize = 0;
     let localStorageAvailable = true;
     try {
       const localData = localStorage.getItem(LS_KEY);
       localStorageSize = localData ? localData.length : 0;
-    } catch (error) {
+    } catch {
       localStorageAvailable = false;
     }
 
-    // Check if migration is needed
     const localStorageHasData = localStorageSize > 0;
     const indexedDBHasData = enhancedStats.count > 0;
     const migrationNeeded = localStorageHasData && !indexedDBHasData;
@@ -335,17 +345,10 @@ export async function getStorageInfo(): Promise<{
 
     return {
       enhanced: enhancedStats,
-      localStorage: {
-        size: localStorageSize,
-        available: localStorageAvailable
-      },
-      migration: {
-        needed: migrationNeeded,
-        completed: migrationCompleted
-      }
+      localStorage: { size: localStorageSize, available: localStorageAvailable },
+      migration: { needed: migrationNeeded, completed: migrationCompleted }
     };
-  } catch (error) {
-    console.warn('Failed to get storage info:', error);
+  } catch {
     return {
       enhanced: { count: 0, totalSize: 0 },
       localStorage: { size: 0, available: false },
@@ -354,22 +357,15 @@ export async function getStorageInfo(): Promise<{
   }
 }
 
-/**
- * Force a manual data refresh from persistent storage
- */
 export async function refreshData(): Promise<AppState> {
   try {
     await enhancedStorage.refreshCache();
     return await loadStateAsync();
-  } catch (error) {
-    console.warn('Failed to refresh data:', error);
+  } catch {
     return loadState();
   }
 }
 
-/**
- * Clear all application data
- */
 export async function clearAllData(): Promise<void> {
   try {
     await enhancedStorage.clear();
@@ -380,40 +376,23 @@ export async function clearAllData(): Promise<void> {
   }
 }
 
-/**
- * Export data for backup
- */
 export async function exportAppData(): Promise<string> {
   try {
     const state = await loadStateAsync();
     const storageInfo = await getStorageInfo();
-    
-    return JSON.stringify({
-      version: "1.0",
-      exportedAt: new Date().toISOString(),
-      storageInfo,
-      data: state
-    }, null, 2);
+    return JSON.stringify({ version: "1.0", exportedAt: new Date().toISOString(), storageInfo, data: state }, null, 2);
   } catch (error) {
     console.warn('Failed to export data:', error);
     throw error;
   }
 }
 
-/**
- * Import data from backup
- */
 export async function importAppData(jsonData: string): Promise<AppState> {
   try {
     const backup = JSON.parse(jsonData);
-    
-    if (!backup.data || !backup.version) {
-      throw new Error('Invalid backup format');
-    }
-    
+    if (!backup.data || !backup.version) throw new Error('Invalid backup format');
     const state = parseAndMigrateState(JSON.stringify(backup.data));
     await saveStateAsync(state);
-    
     return state;
   } catch (error) {
     console.warn('Failed to import data:', error);
