@@ -1,133 +1,79 @@
-/*
-  Point-mass solver with:
-   - no-drag closed form
-   - G1/G7 using BC + drag function f(v)
+import type { AmmoProfile, Environment } from "./appState";
+import { G1, G7 } from "./dragTables"; // assume these export arrays of { mach, cd }
 
-  Conventions:
-   - SI units internally
-   - thetaDeg is the bore/launch angle above horizontal
-   - y0 is muzzle height relative to target line (m)
-   - rhoUsed = 1.225 for "standard", else user-provided
+const g = 9.81;
+const rho0 = 1.225; // ICAO reference kg/m³
 
-  Formulas:
-   - mil  = (drop / X) * 1000
-   - MOA  = (drop / X) * 3438
-*/
+function airDensity(env: Environment): number {
+  const T = env.temperatureC + 273.15;
+  const p = env.pressurehPa * 100; // hPa → Pa
+  const R = 287.05;
+  return p / (R * T);
+}
 
-import { fG1, fG7 } from "./dragTables";
-import type { ModelKind } from "./appState";
-
-export type SolveInput = {
-  V0: number; thetaDeg: number; X: number; g: number; y0: number;
-  model: ModelKind; bcUsed: number | null; rho: number; // kg/m^3
-};
-
-export type SolveOutput = {
-  modelUsed: ModelKind; tFlight: number; vImpact: number; drop: number; holdMil: number; holdMoa: number;
-};
-
-const RHO0 = 1.225;
-
-export function calculate({ V0, thetaDeg, X, g, y0, model, bcUsed, rho }: SolveInput): SolveOutput {
-  if (model === "noDrag") {
-    return solveNoDrag({ V0, thetaDeg, X, g, y0 });
+function lookupCd(mach: number, model: "G1" | "G7"): number {
+  const table = model === "G1" ? G1 : G7;
+  for (let i = 0; i < table.length - 1; i++) {
+    if (mach >= table[i].mach && mach <= table[i + 1].mach) {
+      const f =
+        (mach - table[i].mach) /
+        (table[i + 1].mach - table[i].mach);
+      return table[i].cd + f * (table[i + 1].cd - table[i].cd);
+    }
   }
-  if (!bcUsed || bcUsed <= 0) throw new Error("BC required for drag models.");
-  const f = (model === "G1") ? fG1 : fG7;
-  return solveWithBC({ V0, thetaDeg, X, g, y0, BC: bcUsed, rho, f, model });
+  return table[table.length - 1].cd;
 }
 
-// ---------- No-drag closed-form ----------
-function solveNoDrag({ V0, thetaDeg, X, g, y0 }: { V0: number; thetaDeg: number; X: number; g: number; y0: number; }): SolveOutput {
-  const th = (thetaDeg * Math.PI) / 180;
-  const vx = V0 * Math.cos(th);
-  const vy = V0 * Math.sin(th);
-  const t = X / Math.max(vx, 1e-9);
-  const y = y0 + vy * t - 0.5 * g * t * t;
-  const drop = y; // relative to baseline
-  const vImpact = Math.sqrt(vx * vx + (vy - g * t) ** 2);
-  const holdMil = (drop / X) * 1000;
-  const holdMoa = (drop / X) * 3438;
-  return { modelUsed: "noDrag", tFlight: t, vImpact, drop, holdMil, holdMoa };
-}
+export function solveTrajectory(
+  ammo: AmmoProfile,
+  env: Environment,
+  rangeM: number,
+  windSpeed: number = 0,
+  windAngleDeg: number = 90
+): {
+  tof: number;
+  impactVel: number;
+  dropM: number;
+  driftM: number;
+  holdMil: number;
+  holdMoa: number;
+} {
+  const rho = airDensity(env);
+  const densityFactor = rho / rho0;
 
-// ---------- BC-based point-mass using G1/G7 f(v) ----------
-/*
-  Using standard point-mass:
-    dv/dt = - g * (rho/rho0) * f(v) / BC
-  Split to components proportionally to velocity.
-  Integrate with RK4 for stability. dt in seconds.
-*/
-type DragFunc = (v: number) => number;
-function solveWithBC({
-  V0, thetaDeg, X, g, y0, BC, rho, f, model,
-}: { V0: number; thetaDeg: number; X: number; g: number; y0: number; BC: number; rho: number; f: DragFunc; model: ModelKind; }): SolveOutput {
-  const th = (thetaDeg * Math.PI) / 180;
-  let x = 0, y = y0;
-  let vx = V0 * Math.cos(th);
-  let vy = V0 * Math.sin(th);
+  let x = 0;
+  let y = 0;
+  let vx = ammo.V0;
+  let vy = 0;
+  let drift = 0;
+
+  const dt = 0.001; // step in seconds
   let t = 0;
-  const densityRatio = rho / RHO0;
-  const dt = 0.001;    // 1 ms
-  const maxT = 12.0;   // safety
 
-  function acc(vx: number, vy: number) {
-    const v = Math.max(1e-8, Math.hypot(vx, vy));
-    const dv = -g * densityRatio * (f(v) / BC); // scalar speed decay
-    const ax = (dv * vx) / v;
-    const ay = -g + (dv * vy) / v;
-    return { ax, ay };
-  }
+  while (x < rangeM && y >= -10) {
+    const v = Math.sqrt(vx * vx + vy * vy);
+    const mach = v / 343; // crude speed of sound
 
-  while (x < X && t < maxT) {
-    // RK4 for vx, vy, x, y
-    const k1 = (() => {
-      const { ax, ay } = acc(vx, vy);
-      return { ax, ay, vx, vy, xdot: vx, ydot: vy };
-    })();
+    const cd = lookupCd(mach, ammo.model === "G1" ? "G1" : "G7");
+    const drag = (densityFactor * v * v * cd) / (2 * ammo.bc);
 
-    const k2 = (() => {
-      const vxn = vx + k1.ax * dt / 2, vyn = vy + k1.ay * dt / 2;
-      const { ax, ay } = acc(vxn, vyn);
-      return { ax, ay, vx: vxn, vy: vyn, xdot: vxn, ydot: vyn };
-    })();
+    // deceleration
+    const ax = -(drag * (vx / v));
+    const ay = -(g + drag * (vy / v));
 
-    const k3 = (() => {
-      const vxn = vx + k2.ax * dt / 2, vyn = vy + k2.ay * dt / 2;
-      const { ax, ay } = acc(vxn, vyn);
-      return { ax, ay, vx: vxn, vy: vyn, xdot: vxn, ydot: vyn };
-    })();
-
-    const k4 = (() => {
-      const vxn = vx + k3.ax * dt, vyn = vy + k3.ay * dt;
-      const { ax, ay } = acc(vxn, vyn);
-      return { ax, ay, vx: vxn, vy: vyn, xdot: vxn, ydot: vyn };
-    })();
-
-    // integrate
-    const axAvg = (k1.ax + 2*k2.ax + 2*k3.ax + k4.ax) / 6;
-    const ayAvg = (k1.ay + 2*k2.ay + 2*k3.ay + k4.ay) / 6;
-    vx += axAvg * dt;
-    vy += ayAvg * dt;
-
-    const xdotAvg = (k1.xdot + 2*k2.xdot + 2*k3.xdot + k4.xdot) / 6;
-    const ydotAvg = (k1.ydot + 2*k2.ydot + 2*k3.ydot + k4.ydot) / 6;
-    x += xdotAvg * dt;
-    y += ydotAvg * dt;
+    vx += ax * dt;
+    vy += ay * dt;
+    x += vx * dt;
+    y += vy * dt;
+    drift += windSpeed * dt * Math.cos((windAngleDeg * Math.PI) / 180);
 
     t += dt;
-
-    if (!isFinite(x + y + vx + vy)) throw new Error("Numerical instability.");
   }
 
-  const drop = y; // relative
-  const vImpact = Math.hypot(vx, vy);
-  const holdMil = (drop / X) * 1000;
-  const holdMoa = (drop / X) * 3438;
+  const dropM = -y;
+  const impactVel = Math.sqrt(vx * vx + vy * vy);
+  const holdMil = (dropM / rangeM) * 1000;
+  const holdMoa = holdMil * 3.438;
 
-  return { modelUsed: model, tFlight: t, vImpact, drop, holdMil, holdMoa };
-}
-
-export function solve(calcin: SolveInput): SolveOutput {
-  return calculate(calcin);
+  return { tof: t, impactVel, dropM, driftM: drift, holdMil, holdMoa };
 }
