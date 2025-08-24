@@ -1,296 +1,339 @@
-// src/pages/DOPEpage.tsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect } from "react";
 import { useApp } from "../contexts/AppContext";
-import { SessionManager } from "../components/SessionManager";
-import { PDFExport } from "../components/PDFExport";
-import { StorageManager } from "../components/StorageManager";
-import { EquipmentManager } from "../components/EquipmentManager";
+import type { Weapon, AmmoProfile } from "../lib/appState";
+import { Button } from "../components/ui/button";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import { Plus, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner@2.0.3";
-import type { Entry } from "../lib/appState";
-import { solveTrajectory } from "../lib/calcEngine";
 
-/* small UI */
-const KV = ({ k, v }: { k: string; v: string }) => (
-  <div className="flex justify-between bg-card px-2 py-1 border">
-    <span className="text-xs">{k}</span>
-    <span className="font-mono text-xs">{v}</span>
-  </div>
-);
+const DEFAULT_ENV = { temperatureC: 15, pressurehPa: 1013, humidityPct: 50, altitudeM: 0 };
 
-/* helpers */
-const round10 = (x: number) => Math.round(x * 10) / 10;
-const fmtElev = (mil: number, moa: number, units: "MIL" | "MOA") => {
-  const v = units === "MIL" ? mil : moa;
-  if (!Number.isFinite(v) || Math.abs(v) < 0.05) return "0.0";
-  return `${v > 0 ? "U" : "D"}${Math.abs(v).toFixed(1)}`;
-};
-
-type DOPEEntry = {
-  range: number;
-  elevationMil: number;
-  elevationMoa: number;
-  actualEntries: number;
-  confidence: "high" | "medium" | "low";
-};
-
-function buildRow(rangeM: number, profile: {
-  V0: number; BC: number; model: "G1"|"G7"|"noDrag";
-  y0Cm: number; zeroDistanceM: number;
-  tempC: number; humidity: number; windSpeed: number; windDir: number;
+function NumberInput({
+  id, label, value, onChange, step = "any", className = ""
+}: {
+  id: string; label: string; value: number;
+  onChange: (v: number) => void; step?: string; className?: string;
 }) {
-  const env = { temperatureC: profile.tempC, humidityPct: profile.humidity };
-  const t = solveTrajectory({
-    bc: profile.BC,
-    model: profile.model,
-    muzzleV: profile.V0,
-    bulletWeightGr:  profile.model ?  profile.V0 /* unused but required in some sigs */ :  profile.V0,
-    zeroDistanceM: profile.zeroDistanceM,
-    scopeHeightMm: profile.y0Cm * 10,
-    rangeM,
-    env,
-    wind: { speed: profile.windSpeed, directionDeg: profile.windDir }
-  });
-
-  let mil = Number.isFinite(t.holdMil) ? t.holdMil : 0;
-  let moa = Number.isFinite(t.holdMoa) ? t.holdMoa : mil * 3.437746;
-
-  if (Math.abs(mil) < 1e-6 && Math.abs(rangeM - profile.zeroDistanceM) > 0.5) {
-    const tz = solveTrajectory({
-      bc: profile.BC,
-      model: profile.model,
-      muzzleV: profile.V0,
-      bulletWeightGr: profile.V0,
-      zeroDistanceM: profile.zeroDistanceM,
-      scopeHeightMm: profile.y0Cm * 10,
-      rangeM: profile.zeroDistanceM,
-      env,
-      wind: { speed: profile.windSpeed, directionDeg: profile.windDir }
-    });
-    const extraDrop = (t.drop ?? 0) - (tz.drop ?? 0);
-    mil = (extraDrop / Math.max(rangeM, 1)) * 1000;
-    moa = mil * 3.437746;
-  }
-
-  return {
-    range: Math.round(rangeM),
-    elevationMil: round10(mil),
-    elevationMoa: round10(moa),
-    actualEntries: 0,
-    confidence: Math.abs(rangeM - profile.zeroDistanceM) <= 1 ? "high" : "medium"
-  } as DOPEEntry;
+  return (
+    <div className={className}>
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type="number"
+        step={step}
+        value={Number.isFinite(value) ? value : ""}
+        onChange={(e) => onChange(parseFloat(e.target.value || "0"))}
+      />
+    </div>
+  );
 }
 
-export function DOPEPage() {
-  const { state, setState, navigate } = useApp();
-  const { session, entries, calculator } = state;
+export function EquipmentPage() {
+  const { state, setState } = useApp();
+  const { weapons, selectedWeaponId, selectedAmmoId } = state;
 
-  // ensure a session exists
-  if (!session) {
-    const s = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), title: "Default Session", place: "" };
-    setState({ ...state, session: s });
-    return <div className="p-6 text-center text-muted-foreground">Initializing session…</div>;
-  }
+  /* ---------- one-time migration: ensure every ammo has zeroEnv ---------- */
+  useEffect(() => {
+    let changed = false;
+    const fixed = weapons.map((w) => {
+      const ammo = w.ammo.map((a) => {
+        if (!a.zeroEnv) {
+          changed = true;
+          return { ...a, zeroEnv: { ...DEFAULT_ENV } };
+        }
+        // also backfill missing altitudeM
+        if (a.zeroEnv.altitudeM === undefined) {
+          changed = true;
+          return { ...a, zeroEnv: { ...a.zeroEnv, altitudeM: 0 } };
+        }
+        return a;
+      });
+      return ammo !== w.ammo ? { ...w, ammo } : w;
+    });
+    if (changed) setState({ ...state, weapons: fixed });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const [sortBy, setSortBy] = useState<"date" | "range">("date");
-  const [filterRange, setFilterRange] = useState({ min: "", max: "" });
-  const [filterNotes, setFilterNotes] = useState("");
-  const [showStorageManager, setShowStorageManager] = useState(false);
+  /* ---------------- helpers ---------------- */
 
-  const filtered = entries
-    .filter(e => (!filterRange.min || e.rangeM >= Number(filterRange.min)) && (!filterRange.max || e.rangeM <= Number(filterRange.max)))
-    .filter(e => !filterNotes || (e.notes || "").toLowerCase().includes(filterNotes.toLowerCase()))
-    .sort((a,b) => sortBy === "date" ? (new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) : (a.rangeM - b.rangeM));
+  const selectWeapon = (id: string | undefined) =>
+    setState({ ...state, selectedWeaponId: id });
 
-  // Build a profile from entries, or fall back to current calculator so the page still works.
-  const profile = useMemo(() => {
-    if (filtered.length) {
-      const avg = <T extends number>(xs: T[], d: T) => {
-        const ys = xs.filter((n) => Number.isFinite(n)) as number[];
-        return (ys.length ? ys.reduce((a,b)=>a+b,0)/ys.length : d) as T;
-      };
-      const models = filtered.map(e=>e.model);
-      const most = models.sort((a,b)=>models.filter(x=>x===a).length - models.filter(x=>x===b).length).pop() ?? "G7";
-      return {
-        V0: avg(filtered.map(e=>e.V0), 800),
-        BC: avg(filtered.map(e=>e.bcUsed ?? 0.25), 0.25),
-        model: most as "G1"|"G7"|"noDrag",
-        y0Cm: filtered[0].y0Cm ?? 3.5,
-        zeroDistanceM: avg(filtered.map(e=>e.zeroDistanceM ?? 100), 100),
-        tempC: avg(filtered.map(e=>e.temperature), 15),
-        humidity: avg(filtered.map(e=>e.humidity), 50),
-        windSpeed: avg(filtered.map(e=>e.windSpeed), 0),
-        windDir: avg(filtered.map(e=>e.windDirection), 0),
-      };
-    }
-    // fallback from calculator
-    return {
-      V0: state.calculator.V0 ?? 800,
-      BC: state.calculator.bc ?? 0.25,
-      model: (state.calculator.model ?? "G7") as "G1"|"G7"|"noDrag",
-      y0Cm: state.calculator.y0Cm ?? 3.5,
-      zeroDistanceM: state.calculator.zeroDistanceM ?? 100,
-      tempC: state.calculator.temperature ?? 15,
-      humidity: state.calculator.humidity ?? 50,
-      windSpeed: state.calculator.windSpeed ?? 0,
-      windDir: state.calculator.windDirection ?? 0,
+  const selectAmmo = (id: string | undefined) =>
+    setState({ ...state, selectedAmmoId: id });
+
+  const addWeapon = () => {
+    const w: Weapon = {
+      id: crypto.randomUUID(),
+      name: "New Rifle",
+      scopeUnits: "MIL",
+      barrelLengthIn: 20,
+      twistRateIn: 8,
+      ammo: [],
     };
-  }, [filtered, state.calculator]);
+    setState({
+      ...state,
+      weapons: [...weapons, w],
+      selectedWeaponId: w.id,
+      selectedAmmoId: undefined,
+    });
+    toast.success("Rifle added");
+  };
 
-  // ranges to show
-  const dopeRows: DOPEEntry[] = useMemo(() => {
-    const step = 50;
-    const maxR = Math.max(500, Math.ceil(((filtered.length ? Math.max(...filtered.map(e=>e.rangeM)) : 300))/step)*step);
-    const set = new Set<number>();
-    set.add(Math.round(profile.zeroDistanceM));
-    for (let r = step; r <= maxR; r += step) set.add(r);
-    if (filtered.length) filtered.forEach(e=>set.add(Math.round(e.rangeM)));
-    return Array.from(set).sort((a,b)=>a-b).map(r => buildRow(r, profile));
-  }, [filtered, profile]);
+  const removeWeapon = (id: string) => {
+    const next = weapons.filter((w) => w.id !== id);
+    setState({
+      ...state,
+      weapons: next,
+      selectedWeaponId: next[0]?.id,
+      selectedAmmoId: undefined,
+    });
+    toast.success("Rifle removed");
+  };
+
+  const patchWeapon = (id: string, patch: Partial<Weapon>) => {
+    setState({
+      ...state,
+      weapons: weapons.map((w) => (w.id === id ? { ...w, ...patch } : w)),
+    });
+  };
+
+  const addAmmo = (weaponId: string) => {
+    const a: AmmoProfile = {
+      id: crypto.randomUUID(),
+      name: "New Load",
+      ammoName: "",
+      bulletWeightGr: 140,
+      bc: 0.25,
+      model: "G7",
+      V0: 800,
+      zeroDistanceM: 100,
+      scopeHeightMm: 35,
+      zeroEnv: { ...DEFAULT_ENV },
+    };
+    setState({
+      ...state,
+      weapons: weapons.map((w) => (w.id === weaponId ? { ...w, ammo: [...w.ammo, a] } : w)),
+      selectedWeaponId: weaponId,
+      selectedAmmoId: a.id,
+    });
+    toast.success("Ammo added");
+  };
+
+  const removeAmmo = (weaponId: string, ammoId: string) => {
+    const w = weapons.find((x) => x.id === weaponId);
+    if (!w) return;
+    const nextAmmo = w.ammo.filter((a) => a.id !== ammoId);
+    patchWeapon(weaponId, { ammo: nextAmmo });
+    setState({ ...state, selectedAmmoId: nextAmmo[0]?.id });
+    toast.success("Ammo removed");
+  };
+
+  const patchAmmo = (weaponId: string, ammoId: string, patch: Partial<AmmoProfile>) => {
+    const w = weapons.find((x) => x.id === weaponId);
+    if (!w) return;
+    const nextAmmo = w.ammo.map((a) => (a.id === ammoId ? { ...a, ...patch, zeroEnv: { ...DEFAULT_ENV, ...(a.zeroEnv || {}), ...(patch.zeroEnv || {}) } } : a));
+    patchWeapon(weaponId, { ammo: nextAmmo });
+  };
+
+  const saveAll = () => {
+    setState({ ...state }); // triggers persistence
+    toast.success("Equipment saved");
+  };
+
+  /* ---------------- render ---------------- */
 
   return (
-    <div className="container max-w-7xl mx-auto p-4 space-y-4">
+    <div className="container max-w-6xl mx-auto p-3 space-y-4">
+      {/* Header toolbar */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">DOPE (Data On Previous Engagement)</h2>
-        <button onClick={() => setShowStorageManager(s=>!s)} className="px-3 py-1 bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80">
-          {showStorageManager ? "Hide" : "Show"} Storage Manager
-        </button>
-      </div>
-
-      {showStorageManager && (
-        <div className="space-y-4">
-          <StorageManager />
-          <EquipmentManager />
+        <div className="flex items-center gap-2">
+          <Wrench className="h-6 w-6 text-primary" />
+          <h1 className="text-xl font-semibold">Equipment & Ammunition</h1>
         </div>
-      )}
-
-      {/* Session controls */}
-      <div className="p-3 border bg-card">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1 min-w-0"><SessionManager compact showNewSession={false} /></div>
-          <div className="flex gap-2 flex-shrink-0">
-            <button onClick={() => navigate("/log")} className="px-3 py-1 bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80">Add Entry</button>
-          </div>
+        <div className="flex gap-2">
+          <Button onClick={addWeapon} size="sm">
+            <Plus className="h-4 w-4 mr-1" /> Add Rifle
+          </Button>
+          <Button variant="outline" size="sm" onClick={saveAll}>
+            Save All Changes
+          </Button>
         </div>
       </div>
 
-      {/* Filters */}
-      <div className="p-3 border bg-card space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className="text-sm font-medium">Sort by:</label>
-            <select value={sortBy} onChange={(e)=>setSortBy(e.target.value as any)} className="w-full px-2 py-1 border">
-              <option value="date">Date (newest first)</option>
-              <option value="range">Range (ascending)</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-sm font-medium">Range filter:</label>
-            <div className="flex gap-1">
-              <input type="number" placeholder="Min" value={filterRange.min} onChange={(e)=>setFilterRange({...filterRange, min: e.target.value})} className="w-full px-2 py-1 border" />
-              <input type="number" placeholder="Max" value={filterRange.max} onChange={(e)=>setFilterRange({...filterRange, max: e.target.value})} className="w-full px-2 py-1 border" />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium">Notes filter:</label>
-            <input type="text" placeholder="Search notes..." value={filterNotes} onChange={(e)=>setFilterNotes(e.target.value)} className="w-full px-2 py-1 border" />
-          </div>
-        </div>
+      {/* Weapon list */}
+      <div className="grid gap-3">
+        {weapons.map((w) => {
+          const isSelected = selectedWeaponId === w.id;
+          return (
+            <Card
+              key={w.id}
+              className={`transition-colors ${isSelected ? "ring-2 ring-primary" : ""}`}
+              onClick={() => selectWeapon(w.id)}
+            >
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-base truncate">{w.name || "Unnamed Rifle"}</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      addAmmo(w.id);
+                    }}
+                  >
+                    <Plus className="h-3 w-3 mr-1" /> Add Ammo
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeWeapon(w.id);
+                    }}
+                    aria-label="Delete rifle"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardHeader>
 
-        <div className="flex flex-wrap gap-2">
-          <PDFExport entries={filtered} session={session} />
-        </div>
-      </div>
+              {/* Weapon body */}
+              <CardContent onClick={(e) => e.stopPropagation()}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor={`name-${w.id}`}>Rifle Name</Label>
+                    <Input
+                      id={`name-${w.id}`}
+                      value={w.name}
+                      onChange={(e) => patchWeapon(w.id, { name: e.target.value })}
+                      placeholder="e.g., Remington 700"
+                    />
+                  </div>
 
-      {/* Table */}
-      <div className="border">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted">
-              <tr>
-                <th className="px-3 py-2 text-left">Date</th>
-                <th className="px-3 py-2 text-left">Range</th>
-                <th className="px-3 py-2 text-left">Firearm</th>
-                <th className="px-3 py-2 text-left">Ammo</th>
-                <th className="px-3 py-2 text-left">Elevation ({calculator.scopeUnits})</th>
-                <th className="px-3 py-2 text-left">Windage ({calculator.scopeUnits})</th>
-                <th className="px-3 py-2 text-left">Group</th>
-                <th className="px-3 py-2 text-left">Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
-                    No entries yet — showing a calculated DOPE table from your current calculator values below.
-                    <div className="mt-2">
-                      <button onClick={() => navigate("/log")} className="text-primary hover:underline">Add your first entry</button>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((e) => {
-                  const elevMil = e.actualAdjMil?.up ?? 0;
-                  const elevMoa = e.actualAdjMoa?.up ?? 0;
-                  const windMil = e.actualAdjMil?.right ?? 0;
-                  const windMoa = e.actualAdjMoa?.right ?? 0;
-                  const windText = calculator.scopeUnits === "MIL"
-                    ? (Math.abs(windMil) < 0.05 ? "0.0" : `${windMil > 0 ? "L" : "R"}${Math.abs(windMil).toFixed(1)}`)
-                    : (Math.abs(windMoa) < 0.05 ? "0.0" : `${windMoa > 0 ? "L" : "R"}${Math.abs(windMoa).toFixed(1)}`);
-                  return (
-                    <tr key={e.id} className="border-t hover:bg-muted/50">
-                      <td className="px-3 py-2">{new Date(e.createdAt).toLocaleDateString()}</td>
-                      <td className="px-3 py-2 font-mono">{e.rangeM}m</td>
-                      <td className="px-3 py-2">{e.firearmName || "N/A"}</td>
-                      <td className="px-3 py-2">{e.ammoName || "N/A"}</td>
-                      <td className="px-3 py-2 font-mono">{fmtElev(elevMil, elevMoa, calculator.scopeUnits)}</td>
-                      <td className="px-3 py-2 font-mono">{windText}</td>
-                      <td className="px-3 py-2">{e.groupSizeCm ? `${e.groupSizeCm}cm` : "N/A"}</td>
-                      <td className="px-3 py-2">{e.notes || "N/A"}</td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <NumberInput
+                      id={`barrel-${w.id}`}
+                      label="Barrel Length (in)"
+                      value={w.barrelLengthIn}
+                      onChange={(v) => patchWeapon(w.id, { barrelLengthIn: v })}
+                      step="0.5"
+                    />
+                    <NumberInput
+                      id={`twist-${w.id}`}
+                      label="Twist Rate (in)"
+                      value={w.twistRateIn}
+                      onChange={(v) => patchWeapon(w.id, { twistRateIn: v })}
+                      step="0.5"
+                    />
+                  </div>
 
-      {/* Always show a DOPE card (from entries or from calculator fallback) */}
-      <div className="space-y-6">
-        <h3 className="text-lg font-semibold">DOPE (Calculated)</h3>
-        <div className="border p-4 bg-card">
-          <div className="mb-4 p-3 bg-muted">
-            <div className="text-sm font-medium mb-2">Ballistic Profile</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <KV k="V₀" v={`${Math.round(profile.V0)} m/s`} />
-              <KV k="BC" v={profile.BC.toFixed(3)} />
-              <KV k="Model" v={profile.model} />
-              <KV k="Zero" v={`${profile.zeroDistanceM}m`} />
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-muted">
-                  <th className="border px-2 py-1 text-left">Range (m)</th>
-                  <th className="border px-2 py-1 text-left">Elevation ({calculator.scopeUnits})</th>
-                  <th className="border px-2 py-1 text-left">Confidence</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dopeRows.map((r, i) => (
-                  <tr key={i} className={i % 2 === 0 ? "bg-background" : "bg-muted/30"}>
-                    <td className="border px-2 py-1 font-mono">{r.range}</td>
-                    <td className="border px-2 py-1 font-mono">{fmtElev(r.elevationMil, r.elevationMoa, calculator.scopeUnits)}</td>
-                    <td className={`border px-2 py-1 ${r.confidence === "high" ? "text-green-600" : r.confidence === "medium" ? "text-yellow-600" : "text-red-600"}`}>
-                      {r.confidence}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  <div>
+                    <Label>Scope Units</Label>
+                    <Select
+                      value={w.scopeUnits}
+                      onValueChange={(val) => patchWeapon(w.id, { scopeUnits: val as Weapon["scopeUnits"] })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="MIL">MIL</SelectItem>
+                        <SelectItem value="MOA">MOA</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {/* Ammo list */}
+                <div className="mt-4">
+                  <h3 className="font-medium text-sm mb-2">Ammunition</h3>
+                  {w.ammo.length === 0 && (
+                    <div className="text-xs text-muted-foreground">No ammo yet. Click “Add Ammo”.</div>
+                  )}
+                  <div className="grid gap-2">
+                    {w.ammo.map((a) => {
+                      const open = selectedAmmoId === a.id;
+                      const env = a.zeroEnv || DEFAULT_ENV; // <— guard!
+                      return (
+                        <Card
+                          key={a.id}
+                          className={`border ${open ? "ring-1 ring-primary" : ""}`}
+                          onClick={() => selectAmmo(a.id)}
+                        >
+                          <CardHeader className="flex flex-row items-center justify-between py-2">
+                            <CardTitle className="text-sm truncate">
+                              {a.name || a.ammoName || "Load"}
+                            </CardTitle>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeAmmo(w.id, a.id);
+                              }}
+                              aria-label="Delete ammo"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </CardHeader>
+
+                          {open && (
+                            <CardContent onClick={(e) => e.stopPropagation()} className="space-y-3">
+                              <Input
+                                value={a.name}
+                                onChange={(e) => patchAmmo(w.id, a.id, { name: e.target.value })}
+                                placeholder="Load name (optional)"
+                              />
+
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <NumberInput id={`bw-${a.id}`} label="Bullet Weight (gr)" value={a.bulletWeightGr}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { bulletWeightGr: v })}/>
+                                <NumberInput id={`mv-${a.id}`} label="Muzzle Velocity (m/s)" value={a.V0}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { V0: v })}/>
+                                <div>
+                                  <Label>Drag Model</Label>
+                                  <Select value={a.model} onValueChange={(val) => patchAmmo(w.id, a.id, { model: val as any })}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="G1">G1</SelectItem>
+                                      <SelectItem value="G7">G7</SelectItem>
+                                      <SelectItem value="noDrag">No Drag</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <NumberInput id={`bc-${a.id}`} label={`BC (${a.model})`} value={a.bc} step="0.001"
+                                  onChange={(v) => patchAmmo(w.id, a.id, { bc: v })}/>
+                              </div>
+
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <NumberInput id={`zero-${a.id}`} label="Zero Distance (m)" value={a.zeroDistanceM}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroDistanceM: v })}/>
+                                <NumberInput id={`sh-${a.id}`} label="Scope Height (mm)" value={a.scopeHeightMm}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { scopeHeightMm: v })}/>
+                                <NumberInput id={`zt-${a.id}`} label="Zero Temp (°C)" value={env.temperatureC}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...env, temperatureC: v } })}/>
+                                <NumberInput id={`zp-${a.id}`} label="Zero Pressure (hPa)" value={env.pressurehPa}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...env, pressurehPa: v } })}/>
+                                <NumberInput id={`zh-${a.id}`} label="Zero Humidity (%)" value={env.humidityPct}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...env, humidityPct: v } })}/>
+                                <NumberInput id={`za-${a.id}`} label="Zero Altitude (m)" value={env.altitudeM ?? 0}
+                                  onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...env, altitudeM: v } })}/>
+                              </div>
+                            </CardContent>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );
