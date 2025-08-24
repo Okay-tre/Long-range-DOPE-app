@@ -1,13 +1,14 @@
 // src/pages/CalculatorPage.tsx
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useApp } from "../contexts/AppContext";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Button } from "../components/ui/button";
 import type { Environment } from "../lib/appState";
 import { buildDopeTable } from "../lib/calcEngine";
 import { computeCoriolisHold } from "../utils/coriolis";
-import { Button } from "../components/ui/button";
+import { fetchFMIWeather } from "../utils/fmi";
 import { toast } from "sonner@2.0.3";
 
 export function CalculatorPage() {
@@ -19,7 +20,10 @@ export function CalculatorPage() {
 
   // Shooter environment
   const [env, setEnv] = useState<Environment>({
-    temperatureC: 20, pressurehPa: 1013, humidityPct: 50, altitudeM: 0,
+    temperatureC: 20,
+    pressurehPa: 1013,
+    humidityPct: 50,
+    altitudeM: 0,
   });
 
   // Wind
@@ -35,7 +39,7 @@ export function CalculatorPage() {
   const [azimuth, setAzimuth]   = useState<number>(0); // user-entered bearing to target
   const [locationNote, setLocationNote] = useState<string>("");
 
-  // Ask for location for latitude (optional)
+  // Get browser location for Coriolis latitude
   const handleUseLocation = () => {
     if (!navigator.geolocation) {
       toast.error("Geolocation not supported by this browser");
@@ -46,6 +50,35 @@ export function CalculatorPage() {
         setLatitude(pos.coords.latitude);
         setLocationNote(`Using device location: lat ${pos.coords.latitude.toFixed(4)}`);
         toast.success("Location acquired for Coriolis");
+      },
+      (err) => {
+        toast.error(`Location error: ${err.message}`);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  // Use FMI to fill weather (plus wind if available)
+  const handleUseFMI = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation not supported by this browser");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const wx = await fetchFMIWeather(pos.coords.latitude, pos.coords.longitude);
+          setEnv({
+            temperatureC: wx.temperatureC,
+            pressurehPa: Math.round(wx.pressurePa / 100),
+            humidityPct: Math.round(wx.rhPercent),
+            altitudeM: env.altitudeM ?? 0, // keep user altitude
+          });
+          if (typeof wx.windSpeedMs === "number") setWindSpeed(wx.windSpeedMs);
+          toast.success(wx.stationName ? `FMI: ${wx.stationName}` : "FMI weather loaded");
+        } catch (e: any) {
+          toast.error("Couldn’t fetch FMI weather; using manual values");
+        }
       },
       (err) => {
         toast.error(`Location error: ${err.message}`);
@@ -68,44 +101,42 @@ export function CalculatorPage() {
     .filter((n) => Number.isFinite(n) && n > 0);
 
   // Core ballistic results (without Coriolis)
-  // Assumes your buildDopeTable(ammo, env, ranges, windSpeed, windAngle)
-  // returns array aligned to 'ranges' with: { tof, impactVel, dropM, holdMil, holdMoa, driftM }
+  // buildDopeTable(ammo, env, ranges, windSpeed, windAngle)
+  // -> [{ tof, impactVel, dropM, holdMil, holdMoa, driftM }, ...]
   const base = buildDopeTable(ammo, env, ranges, windSpeed, windAngle);
 
-  // Merge Coriolis if enabled + we have latitude + reasonable solver outputs
+  // Merge Coriolis if enabled and latitude available
   const rows = base.map((row, i) => {
-    const rangeM    = ranges[i];
-    const tof       = row.tof ?? 0;
-    const vImpact   = row.impactVel ?? Math.max(0, ammo.V0 - 300); // fallback-ish
-    const vMuzzle   = ammo.V0;
+    const rangeM  = ranges[i];
+    const tof     = row.tof ?? 0;
+    const vImpact = row.impactVel ?? Math.max(0, ammo.V0 - 300);
+    const vMuzzle = ammo.V0;
 
-    // Default = no correction
     let cor = { elevMil: 0, elevMoa: 0, windMil: 0, windMoa: 0, eastDriftM: 0, upShiftM: 0 };
-
     if (useCoriolis && latitude !== null && Number.isFinite(tof) && tof > 0) {
       cor = computeCoriolisHold({
-        rangeM, tofSec: tof, vMuzzle, vImpact, latitudeDeg: latitude, azimuthDeg: azimuth,
+        rangeM,
+        tofSec: tof,
+        vMuzzle,
+        vImpact,
+        latitudeDeg: latitude,
+        azimuthDeg: azimuth,
       });
     }
 
-    // Combined final holds
     const holdMil = (row.holdMil ?? 0) + cor.elevMil;
     const holdMoa = (row.holdMoa ?? 0) + cor.elevMoa;
-
-    // Add the Coriolis lateral drift to wind drift, convert cor.windMil to meters along range line:
-    // drift_mils = driftM / rangeM * 1000  => extra drift meters from cor.windMil:
-    const corDriftM = (cor.windMil / 1000) * rangeM;
-    const driftM    = (row.driftM ?? 0) + corDriftM;
+    const corDriftM = (cor.windMil / 1000) * rangeM; // convert Coriolis wind mils to meters
+    const driftM = (row.driftM ?? 0) + corDriftM;
 
     return {
       ...row,
-      // originals
       rangeM,
-      // coriolis components
       corElevMil: cor.elevMil,
       corWindMil: cor.windMil,
-      // merged
-      holdMil, holdMoa, driftM,
+      holdMil,
+      holdMoa,
+      driftM,
     };
   });
 
@@ -114,36 +145,60 @@ export function CalculatorPage() {
       {/* Environment & Wind */}
       <Card>
         <CardHeader><CardTitle>Environment & Wind</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-2 gap-3">
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label>Temperature (°C)</Label>
-            <Input type="number" value={env.temperatureC}
-              onChange={(e) => setEnv({ ...env, temperatureC: Number(e.target.value) })} />
+            <Input
+              type="number"
+              value={env.temperatureC}
+              onChange={(e) => setEnv({ ...env, temperatureC: Number(e.target.value) })}
+            />
           </div>
           <div>
             <Label>Pressure (hPa)</Label>
-            <Input type="number" value={env.pressurehPa}
-              onChange={(e) => setEnv({ ...env, pressurehPa: Number(e.target.value) })} />
+            <Input
+              type="number"
+              value={env.pressurehPa}
+              onChange={(e) => setEnv({ ...env, pressurehPa: Number(e.target.value) })}
+            />
           </div>
           <div>
             <Label>Humidity (%)</Label>
-            <Input type="number" value={env.humidityPct}
-              onChange={(e) => setEnv({ ...env, humidityPct: Number(e.target.value) })} />
+            <Input
+              type="number"
+              value={env.humidityPct}
+              onChange={(e) => setEnv({ ...env, humidityPct: Number(e.target.value) })}
+            />
           </div>
           <div>
             <Label>Altitude (m)</Label>
-            <Input type="number" value={env.altitudeM ?? 0}
-              onChange={(e) => setEnv({ ...env, altitudeM: Number(e.target.value) })} />
+            <Input
+              type="number"
+              value={env.altitudeM ?? 0}
+              onChange={(e) => setEnv({ ...env, altitudeM: Number(e.target.value) })}
+            />
           </div>
           <div>
             <Label>Wind Speed (m/s)</Label>
-            <Input type="number" value={windSpeed}
-              onChange={(e) => setWindSpeed(Number(e.target.value))} />
+            <Input
+              type="number"
+              value={windSpeed}
+              onChange={(e) => setWindSpeed(Number(e.target.value))}
+            />
           </div>
           <div>
             <Label>Wind Angle (°)</Label>
-            <Input type="number" value={windAngle}
-              onChange={(e) => setWindAngle(Number(e.target.value))} />
+            <Input
+              type="number"
+              value={windAngle}
+              onChange={(e) => setWindAngle(Number(e.target.value))}
+            />
+          </div>
+
+          <div className="sm:col-span-2 flex flex-wrap gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={handleUseFMI}>
+              Use FMI weather near me
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -223,6 +278,7 @@ export function CalculatorPage() {
                     <td className="px-2 py-1 text-center">{(r.tof ?? 0).toFixed(2)}</td>
                     <td className="px-2 py-1 text-center">{(r.impactVel ?? 0).toFixed(1)}</td>
                     <td className="px-2 py-1 text-center">{(r.dropM ?? 0).toFixed(2)}</td>
+                    {/* Ballistic-only hold = final minus Coriolis elev */}
                     <td className="px-2 py-1 text-center">{(r.holdMil - (r.corElevMil ?? 0)).toFixed(2)}</td>
                     <td className="px-2 py-1 text-center">{(r.corElevMil ?? 0).toFixed(2)}</td>
                     <td className="px-2 py-1 text-center">{(r.corWindMil ?? 0).toFixed(2)}</td>
@@ -235,8 +291,7 @@ export function CalculatorPage() {
           </div>
           {useCoriolis && latitude !== null && (
             <p className="text-xs text-muted-foreground mt-2">
-              Coriolis sign convention: +ΔElev (MIL) adds to dial UP, +ΔWind (MIL) adds to dial LEFT.
-              In N hemisphere: firing North → right drift (dial LEFT), firing East → higher impact (dial DOWN).
+              Coriolis convention: +ΔElev adds to UP; +ΔWind adds to LEFT (dial directions).
             </p>
           )}
         </CardContent>
