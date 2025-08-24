@@ -1,6 +1,38 @@
-/* TODO: Add color schemes for different calculator themes */
-/* TODO: Implement high contrast mode for accessibility */
-/* TODO: Consider adding animation/transition tokens */
+/* -----------------------------------------------------------
+   BALLISTICS ROADMAP / TODO
+   -----------------------------------------------------------
+   [Core calc + stability]
+   - Add ensureEnv() wrapper everywhere env is read (done: dope.handlers.ts helper, use it in all solves)
+   - Memoize DOPE generation by profile signature to avoid unnecessary recompute
+   - Add optional Coriolis inputs (latitude, shot azimuth, spin dir) and pass to solver
+   - Add simple “Demo profile” button to seed rifle+ammo+env for empty installs
+
+   [UI polish]
+   - Navigation: active tab uses white background with var(--header-background) text (done)
+   - Make DOPE cards auto-refresh when equipment/ammo/env changes
+   - Global MIL/MOA unit toggle that re-renders tables
+   - Add “Copy to clipboard” and “Export CSV” on DOPE table
+   - Add inline warnings if BC/model mismatch obvious (e.g., G1 BC used for long, sleek bullets)
+
+   [PDF/print]
+   - Add page header/logo/date to PDF export
+   - Offer compact and extended DOPE print layouts
+
+   [Persistence & import]
+   - Safe import preview: show how many entries will be added/updated before committing
+   - Session merge strategy options (merge by date vs by range blocks)
+
+   [Advanced physics]
+   - Coriolis: optional component (latitude, azimuth); display its effect per range
+   - Spin drift (if not already included)
+   - Temperature/pressure-sensitive muzzle velocity (powder temp model toggle)
+   - Transonic handling note when solver enters 1.3→0.8 Mach window
+
+   [UX]
+   - Add “Quick preset” chips for common calibers (.308 175gr G7 0.243, 6.5CM 140gr G7 0.27, etc.)
+   - Inline help popovers for BC models, zeroing concepts, and wind convention (L/R sign)
+   - Toast "DOPE updated (100–800m)" when regeneration completes
+*/
 
 @custom-variant dark (&:is(.dark *));
 
