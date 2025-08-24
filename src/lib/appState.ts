@@ -1,22 +1,14 @@
 /* Types + defaults + persistence helpers. UI should call these. */
 import { enhancedStorage } from './indexedDB';
 
-// ---------------- Helper functions for presets ----------------
+/* --------------------------------- Helpers for presets --------------------------------- */
 
 export function createEquipmentPreset(data: Omit<EquipmentPreset, 'id' | 'createdAt'>): EquipmentPreset {
-  return {
-    ...data,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
+  return { ...data, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
 }
 
 export function createBulletPreset(data: Omit<BulletPreset, 'id' | 'createdAt'>): BulletPreset {
-  return {
-    ...data,
-    id: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-  };
+  return { ...data, id: crypto.randomUUID(), createdAt: new Date().toISOString() };
 }
 
 export function applyEquipmentPreset(calculator: CalculatorState, preset: EquipmentPreset): CalculatorState {
@@ -42,7 +34,7 @@ export function applyBulletPreset(calculator: CalculatorState, preset: BulletPre
   };
 }
 
-// ---------------- Core types ----------------
+/* -------------------------------------- Core types -------------------------------------- */
 
 export type ModelKind = "noDrag" | "G1" | "G7";
 export type ScopeUnits = "MIL" | "MOA";
@@ -58,8 +50,8 @@ export type Environment = {
 /** A specific ammo profile tied to a weapon */
 export type AmmoProfile = {
   id: string;
-  name: string;
-  ammoName: string;
+  name: string;                 // friendly name (“New Load”, etc.)
+  ammoName: string;             // manufacturer/product if you want
   bulletWeightGr: number;
   bc: number;
   model: ModelKind;
@@ -67,7 +59,7 @@ export type AmmoProfile = {
   zeroDistanceM: number;
   scopeHeightMm: number;
   mvTempSensitivity?: number;
-  zeroEnv: Environment;
+  zeroEnv: Environment;         // IMPORTANT: always filled (migrated/defaulted)
   notes?: string;
   createdAt?: string;
 };
@@ -77,6 +69,8 @@ export type Weapon = {
   id: string;
   name: string;
   scopeUnits: ScopeUnits;
+  /** NEW: click value per detent, in weapon’s scopeUnits (e.g., 0.1 for MIL, 0.25 for MOA) */
+  scopeClick?: number;
   barrelLengthIn: number;
   twistRateIn: number;
   ammo: AmmoProfile[];
@@ -84,7 +78,7 @@ export type Weapon = {
   createdAt?: string;
 };
 
-// ---------------- Existing preset types ----------------
+/* ------------------------------- Existing preset types ---------------------------------- */
 
 export type EquipmentPreset = {
   id: string;
@@ -112,17 +106,21 @@ export type BulletPreset = {
   createdAt: string;
 };
 
+/** Calculator working state (unified on temperatureC/humidityPct) */
 export type CalculatorState = {
   V0: number; thetaDeg: number; X: number; y0Cm: number;
   model: ModelKind; bc: number;
   bulletWeightGr: number;
-  temperature: number;
-  humidity: number;
-  windSpeed: number;
-  windDirection: number;
+
+  /** unified env names */
+  temperatureC: number;
+  humidityPct: number;
+  windSpeed: number;        // m/s
+  windDirection: number;    // degrees (meteorological or shooter-defined)
   firearmName: string; ammoName: string; barrelLengthIn: number; twistRateIn: number;
   scopeUnits: ScopeUnits;
   zeroDistanceM: number;
+
   lastResult?: {
     modelUsed: ModelKind; tFlight: number; vImpact: number; drop: number; holdMil: number; holdMoa: number;
     rhoUsed: number;
@@ -130,11 +128,11 @@ export type CalculatorState = {
   };
 };
 
-export type Session = { 
-  id: string; 
-  startedAt: string; 
-  title: string; 
-  place: string; 
+export type Session = {
+  id: string;
+  startedAt: string;
+  title: string;
+  place: string;
 };
 
 export type Entry = {
@@ -153,16 +151,16 @@ export type Entry = {
   notes: string;
 };
 
-// ---------------- App state ----------------
+/* ------------------------------------- App state ---------------------------------------- */
 
-export type AppState = { 
-  calculator: CalculatorState; 
-  session: Session; 
-  entries: Entry[]; 
+export type AppState = {
+  calculator: CalculatorState;
+  session: Session;
+  entries: Entry[];
   equipmentPresets: EquipmentPreset[];
   bulletPresets: BulletPreset[];
 
-  /** New structured weapon/ammo model */
+  /** Structured weapon/ammo model */
   weapons: Weapon[];
   selectedWeaponId?: string;
   selectedAmmoId?: string;
@@ -170,7 +168,7 @@ export type AppState = {
 
 const LS_KEY = "ballistics-dope-v1";
 
-// ---------------- Defaults ----------------
+/* -------------------------------------- Defaults ---------------------------------------- */
 
 function createDefaultSession(): Session {
   return {
@@ -187,8 +185,8 @@ export function defaultState(): AppState {
       V0: 800, thetaDeg: 2, X: 300, y0Cm: 3.5,
       model: "G7", bc: 0.25,
       bulletWeightGr: 175,
-      temperature: 15,
-      humidity: 0,
+      temperatureC: 15,
+      humidityPct: 50,
       windSpeed: 0,
       windDirection: 0,
       firearmName: "", ammoName: "", barrelLengthIn: 20, twistRateIn: 8,
@@ -205,7 +203,7 @@ export function defaultState(): AppState {
   };
 }
 
-// ---------------- Persistence ----------------
+/* ------------------------------------ Persistence --------------------------------------- */
 
 export function loadState(): AppState {
   try {
@@ -234,54 +232,126 @@ export async function loadStateAsync(): Promise<AppState> {
   }
 }
 
+/* -------------------------------------- Migration --------------------------------------- */
+
+function ensureZeroEnv(env: Partial<Environment> | undefined): Environment {
+  return {
+    temperatureC: env?.temperatureC ?? 15,
+    pressurehPa: env?.pressurehPa ?? 1013,
+    humidityPct: env?.humidityPct ?? 50,
+    altitudeM: env?.altitudeM ?? 0,
+  };
+}
+
+function migrateWeapons(weapons: any[] | undefined): Weapon[] {
+  if (!Array.isArray(weapons)) return [];
+  return weapons.map((wRaw) => {
+    const scopeUnits: ScopeUnits = (wRaw?.scopeUnits === "MOA") ? "MOA" : "MIL";
+    const scopeClick = Number.isFinite(wRaw?.scopeClick)
+      ? Number(wRaw.scopeClick)
+      : (scopeUnits === "MIL" ? 0.1 : 0.25);
+
+    const ammo: AmmoProfile[] = Array.isArray(wRaw?.ammo)
+      ? wRaw.ammo.map((a: any) => ({
+          id: a?.id ?? crypto.randomUUID(),
+          name: a?.name ?? "Load",
+          ammoName: a?.ammoName ?? "",
+          bulletWeightGr: Number.isFinite(a?.bulletWeightGr) ? a.bulletWeightGr : 175,
+          bc: Number.isFinite(a?.bc) ? a.bc : 0.25,
+          model: (a?.model === "G1" || a?.model === "noDrag") ? a.model : "G7",
+          V0: Number.isFinite(a?.V0) ? a.V0 : 800,
+          zeroDistanceM: Number.isFinite(a?.zeroDistanceM) ? a.zeroDistanceM : 100,
+          scopeHeightMm: Number.isFinite(a?.scopeHeightMm) ? a.scopeHeightMm : 35,
+          mvTempSensitivity: Number.isFinite(a?.mvTempSensitivity) ? a.mvTempSensitivity : undefined,
+          zeroEnv: ensureZeroEnv(a?.zeroEnv),
+          notes: a?.notes ?? undefined,
+          createdAt: a?.createdAt ?? undefined,
+        }))
+      : [];
+
+    return {
+      id: wRaw?.id ?? crypto.randomUUID(),
+      name: wRaw?.name ?? "Rifle",
+      scopeUnits,
+      scopeClick,
+      barrelLengthIn: Number.isFinite(wRaw?.barrelLengthIn) ? wRaw.barrelLengthIn : 20,
+      twistRateIn: Number.isFinite(wRaw?.twistRateIn) ? wRaw.twistRateIn : 8,
+      ammo,
+      notes: wRaw?.notes ?? undefined,
+      createdAt: wRaw?.createdAt ?? undefined,
+    };
+  });
+}
+
+function migrateCalculator(calcRaw: any, defaults: CalculatorState): CalculatorState {
+  if (!calcRaw) return defaults;
+
+  const calc: any = { ...calcRaw };
+
+  // legacy BC fields
+  if (calc.bcG1 !== undefined || calc.bcG7 !== undefined) {
+    calc.bc = calc.model === "G1" ? (calc.bcG1 ?? 0.45) : (calc.bcG7 ?? 0.25);
+    delete calc.bcG1; delete calc.bcG7;
+  }
+
+  // rename humidity/temperature → humidityPct/temperatureC
+  if (calc.temperature !== undefined && calc.temperatureC === undefined) {
+    calc.temperatureC = calc.temperature;
+    delete calc.temperature;
+  }
+  if (calc.humidity !== undefined && calc.humidityPct === undefined) {
+    calc.humidityPct = calc.humidity;
+    delete calc.humidity;
+  }
+
+  // legacy y0 → y0Cm
+  if (calc.y0 !== undefined && calc.y0Cm === undefined) {
+    calc.y0Cm = calc.y0 * 100;
+    delete calc.y0;
+  }
+
+  // clean legacy fields
+  if (calc.atmosMode !== undefined) {
+    delete calc.atmosMode;
+    delete calc.rho;
+  }
+  if (calc.g !== undefined) delete calc.g;
+
+  // ensure required fields
+  calc.windSpeed = Number.isFinite(calc.windSpeed) ? calc.windSpeed : 0;
+  calc.windDirection = Number.isFinite(calc.windDirection) ? calc.windDirection : 0;
+  calc.bulletWeightGr = Number.isFinite(calc.bulletWeightGr) ? calc.bulletWeightGr : 175;
+  calc.scopeUnits = (calc.scopeUnits === "MOA") ? "MOA" : "MIL";
+  calc.zeroDistanceM = Number.isFinite(calc.zeroDistanceM) ? calc.zeroDistanceM : 100;
+  calc.temperatureC = Number.isFinite(calc.temperatureC) ? calc.temperatureC : 15;
+  calc.humidityPct = Number.isFinite(calc.humidityPct) ? calc.humidityPct : 50;
+
+  return { ...defaults, ...calc };
+}
+
 function parseAndMigrateState(raw: string): AppState {
   try {
     const parsed = JSON.parse(raw);
     const defaults = defaultState();
 
-    // ensure session exists
-    let session = parsed.session;
-    if (!session || !session.id) {
-      session = createDefaultSession();
-    } else if (!session.place) {
-      session.place = "";
-    }
+    // session
+    let session: Session = parsed.session && parsed.session.id
+      ? { ...parsed.session, place: parsed.session.place ?? "" }
+      : createDefaultSession();
 
-    // migrate calculator
-    let calculator = parsed.calculator;
-    if (calculator) {
-      if (calculator.bcG1 !== undefined || calculator.bcG7 !== undefined) {
-        calculator.bc = calculator.model === "G1" ? calculator.bcG1 || 0.45 : calculator.bcG7 || 0.25;
-        delete calculator.bcG1;
-        delete calculator.bcG7;
-      }
-      if (calculator.atmosMode !== undefined) {
-        calculator.temperature = calculator.temperature || 15;
-        calculator.humidity = calculator.humidity || 0;
-        delete calculator.atmosMode;
-        delete calculator.rho;
-      }
-      if (calculator.y0 !== undefined) {
-        calculator.y0Cm = calculator.y0 * 100;
-        delete calculator.y0;
-      }
-      if (calculator.g !== undefined) {
-        delete calculator.g;
-      }
-      calculator.windSpeed = calculator.windSpeed || 0;
-      calculator.windDirection = calculator.windDirection || 0;
-      calculator.bulletWeightGr = calculator.bulletWeightGr || 175;
-      calculator.scopeUnits = calculator.scopeUnits || "MIL";
-      calculator.zeroDistanceM = calculator.zeroDistanceM || 100;
-    }
+    // calculator
+    const calculator = migrateCalculator(parsed.calculator, defaults.calculator);
+
+    // weapons + ammo (+scopeClick defaulting)
+    const weapons = migrateWeapons(parsed.weapons);
 
     return {
-      calculator: { ...defaults.calculator, ...calculator },
+      calculator,
       session,
       entries: Array.isArray(parsed.entries) ? parsed.entries : [],
       equipmentPresets: Array.isArray(parsed.equipmentPresets) ? parsed.equipmentPresets : [],
       bulletPresets: Array.isArray(parsed.bulletPresets) ? parsed.bulletPresets : [],
-      weapons: Array.isArray(parsed.weapons) ? parsed.weapons : [],
+      weapons,
       selectedWeaponId: parsed.selectedWeaponId ?? undefined,
       selectedAmmoId: parsed.selectedAmmoId ?? undefined,
     };
@@ -291,13 +361,14 @@ function parseAndMigrateState(raw: string): AppState {
   }
 }
 
-// ---------------- Save helpers ----------------
+/* ----------------------------------- Save helpers --------------------------------------- */
 
 export function saveState(s: AppState): void {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(s));
-    enhancedStorage.setItem(LS_KEY, JSON.stringify(s)).catch(error => {
-      console.warn('Failed to save to IndexedDB, localStorage backup succeeded:', error);
+    const json = JSON.stringify(s);
+    localStorage.setItem(LS_KEY, json);
+    enhancedStorage.setItem(LS_KEY, json).catch(err => {
+      console.warn('Failed IndexedDB save, localStorage succeeded:', err);
     });
   } catch (error) {
     console.warn('Failed to save state:', error);
@@ -308,17 +379,12 @@ export async function saveStateAsync(s: AppState): Promise<void> {
   try {
     await enhancedStorage.setItem(LS_KEY, JSON.stringify(s));
   } catch (error) {
-    console.warn('Failed to save state async, trying localStorage fallback:', error);
-    try {
-      localStorage.setItem(LS_KEY, JSON.stringify(s));
-    } catch (fallbackError) {
-      console.error('All save methods failed:', fallbackError);
-      throw fallbackError;
-    }
+    console.warn('Failed async save, trying localStorage:', error);
+    localStorage.setItem(LS_KEY, JSON.stringify(s));
   }
 }
 
-// ---------------- Other utilities (unchanged) ----------------
+/* -------------------------------- Other utilities --------------------------------------- */
 
 export async function getStorageInfo(): Promise<{
   enhanced: { count: number; totalSize: number; oldestTimestamp?: number; newestTimestamp?: number };
