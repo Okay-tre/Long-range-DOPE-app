@@ -1,69 +1,55 @@
-// src/components/Navigation.tsx
 import React, { useEffect, useState } from "react";
-<img
-  src={`${import.meta.env.BASE_URL}logo-bullet.png`} // if file is public/logo-bullet.png
-  alt="PCG Ballistics"
-  className="w-8 h-8 object-contain shrink-0"
-/>
 
-const TAB = (href: string, label: string, currentPath: string) => {
-  const isActive = currentPath === href;
-  return (
-    <a
-      href={`#${href}`}
-      className={[
-        "px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition",
-        // active: white pill w/ red text, hover subtle
-        isActive
-          ? "bg-white text-[#8b0000]"
-          : "text-white/95 hover:bg-white/10 hover:text-white",
-      ].join(" ")}
-    >
-      {label}
-    </a>
-  );
-};
+type NavRoute = { path: string; label: string; component?: React.ReactNode };
 
-export default function Navigation() {
+export default function Navigation({ routes }: { routes: NavRoute[] }) {
   const [currentPath, setCurrentPath] = useState(
-    () => (window.location.hash.slice(1) || "/calc")
+    () => window.location.hash.slice(1) || routes[0]?.path || "/equipment"
   );
 
   useEffect(() => {
-    const onHash = () => setCurrentPath(window.location.hash.slice(1) || "/calc");
+    const onHash = () => setCurrentPath(window.location.hash.slice(1) || routes[0]?.path || "/equipment");
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, []);
+  }, [routes]);
+
+  const TAB = (href: string, label: string) => {
+    const isActive = currentPath === href;
+    return (
+      <a
+        key={href}
+        href={`#${href}`}
+        className={[
+          "px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition",
+          // active: white pill w/ red text; inactive: darker red button w/ white text
+          isActive
+            ? "bg-white text-red-700"
+            : "bg-red-700 text-white hover:bg-red-800",
+        ].join(" ")}
+      >
+        {label}
+      </a>
+    );
+  };
 
   return (
-    <nav className="bg-[#8b0000] text-white">
-      <div className="mx-auto max-w-6xl px-3 sm:px-4">
-        <div className="h-14 flex items-center justify-between gap-3">
-          {/* Left: logo + title */}
-          <div className="flex items-center gap-3 min-w-0">
-            {logo ? (
-              <img
-                src={logo}
-                alt="PCG Ballistics"
-                className="w-8 h-8 object-contain shrink-0"
-              />
-            ) : (
-              <div className="w-8 h-8 rounded-full bg-white/20" />
-            )}
-            <span className="truncate font-semibold">
-              Long Range DOPE Calculator
-            </span>
+    <header className="sticky top-0 z-40">
+      <div className="w-full bg-red-600 text-white border-b border-red-700/60">
+        <nav className="container mx-auto flex items-center gap-2 px-3 py-2">
+          <a href="#/equipment" className="flex items-center gap-2 shrink-0">
+            {/* Works with public/logo-bullet.png */}
+            <img
+              src={`${import.meta.env.BASE_URL}logo-bullet.png`}
+              alt="PCG Ballistics"
+              className="w-6 h-6 object-contain"
+            />
+            <span className="hidden sm:inline font-semibold">PCG Ballistics</span>
+          </a>
+          <div className="ml-auto flex flex-wrap gap-2">
+            {routes.map((r) => TAB(r.path, r.label))}
           </div>
-
-          {/* Right: tabs */}
-          <div className="flex items-center gap-1 sm:gap-2">
-            {TAB("/equipment", "Equipment", currentPath)}
-            {TAB("/calc", "Calculator", currentPath)}
-            {TAB("/log", "Add Group", currentPath)}
-            {TAB("/dope", "Sessions & DOPE", currentPath)}
-          </div>
-        </div>
+        </nav>
       </div>
-    </nav>
+    </header>
   );
 }
