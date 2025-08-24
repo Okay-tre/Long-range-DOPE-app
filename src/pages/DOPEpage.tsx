@@ -1,13 +1,12 @@
+// src/pages/DOPEpage.tsx
 import React, { useState } from "react";
 import { useApp } from "../contexts/AppContext";
 import {
-  newSession,
-  updateSession,
-  deleteSession,
   deleteEntry,
+  deleteSession,
   exportJSON,
-  importEntriesJSON,
   exportSessionJSON,
+  importEntriesJSON,
 } from "./dope.handlers";
 import { SessionManager } from "../components/SessionManager";
 import { PDFExport } from "../components/PDFExport";
@@ -17,8 +16,7 @@ import { toast } from "sonner@2.0.3";
 import type { Entry } from "../lib/appState";
 import { solveTrajectory } from "../lib/calcEngine";
 
-/* ---------------- UI bits ---------------- */
-
+/* ---------------- Small UI bit ---------------- */
 function KV({ k, v }: { k: string; v: string }) {
   return (
     <div className="flex justify-between bg-card px-2 py-1 border">
@@ -28,35 +26,29 @@ function KV({ k, v }: { k: string; v: string }) {
   );
 }
 
-/* ---------------- Types used only in this page ---------------- */
+/* ---------------- Local types ---------------- */
+type ModelKind = "G1" | "G7" | "noDrag";
 
-interface SessionHeaderRow {
-  type: "session";
-  sessionId: string;
-  sessionTitle: string;
-  sessionPlace: string;
-  sessionStarted: string;
-  rangeM?: number;
-  bulletInfo?: string;
-  firearmName?: string;
-  humidity?: number;
-  windSpeed?: number;
-  windDirection?: number;
-}
-
-interface EntryRow {
-  type: "entry";
-  entry: Entry;
-}
-
-type TableRow = SessionHeaderRow | EntryRow;
+type TableRow =
+  | {
+      type: "session";
+      sessionId: string;
+      sessionTitle: string;
+      sessionPlace: string;
+      sessionStarted: string;
+      rangeM?: number;
+      bulletInfo?: string;
+      firearmName?: string;
+      humidity?: number;
+      windSpeed?: number;
+      windDirection?: number;
+    }
+  | { type: "entry"; entry: Entry };
 
 interface DOPEEntry {
   range: number;
   elevationMil: number;
   elevationMoa: number;
-  windageMil: number;
-  windageMoa: number;
   isCalculated: boolean;
   actualEntries: number;
   confidence: "high" | "medium" | "low";
@@ -65,232 +57,195 @@ interface DOPEEntry {
 interface BallisticProfile {
   V0: number;
   BC: number;
-  model: "G1" | "G7" | "noDrag";
+  model: ModelKind;
   bulletWeightGr: number;
-  y0Cm: number; // scope height
+  scopeHeightMm: number; // mm
   zeroDistanceM: number;
-  avgTemperature: number;
-  avgHumidity: number;
-  avgWindSpeed: number;
-  avgWindDirection: number;
-  // optional pressure/alt for engines that accept them; harmless if ignored
-  pressurehPa?: number;
-  altitudeM?: number;
+  temperatureC: number;
+  humidityPct: number;
+  windSpeed: number;
+  windDirectionDeg: number;
 }
 
-/* ---------------- Helpers: grouping & profiles ---------------- */
+/* ---------------- Utils ---------------- */
+const round10 = (x: number) => Math.round(x * 10) / 10;
+const safe = (n: any, fb = 0) => (Number.isFinite(n) ? Number(n) : fb);
 
-function groupEntriesByRifleAmmo(entries: Entry[]): Map<string, Entry[]> {
-  const groups = new Map<string, Entry[]>();
-  entries.forEach((e) => {
-    const key = `${e.firearmName || "Unknown Rifle"}_${e.ammoName || "Unknown Ammo"}_${e.bulletWeightGr || 0}gr`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(e);
-  });
-  return groups;
-}
-
-function mostCommon<T>(arr: T[], fallback: T): T {
-  if (!arr.length) return fallback;
-  const counts = new Map<T, number>();
-  arr.forEach((x) => counts.set(x, (counts.get(x) || 0) + 1));
-  let best = fallback;
-  let bestN = -1;
-  counts.forEach((n, x) => {
-    if (n > bestN) {
-      bestN = n;
-      best = x;
+const mostCommon = <T,>(xs: T[], fb: T): T => {
+  if (!xs.length) return fb;
+  const m = new Map<T, number>();
+  xs.forEach((x) => m.set(x, (m.get(x) || 0) + 1));
+  let best = fb;
+  let score = -1;
+  m.forEach((v, k) => {
+    if (v > score) {
+      score = v;
+      best = k;
     }
   });
   return best;
+};
+
+const avg = (xs: number[], fb = 0) => {
+  const ys = xs.filter((n) => Number.isFinite(n));
+  return ys.length ? ys.reduce((a, b) => a + b, 0) / ys.length : fb;
+};
+
+function groupEntriesByRifleAmmo(entries: Entry[]): Map<string, Entry[]> {
+  const g = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const key = `${e.firearmName || "Unknown Rifle"}_${e.ammoName || "Unknown Ammo"}_${
+      e.bulletWeightGr || 0
+    }gr`;
+    if (!g.has(key)) g.set(key, []);
+    g.get(key)!.push(e);
+  }
+  return g;
 }
 
-function safeAvg(arr: number[], fallback = 0): number {
-  const xs = arr.filter((n) => Number.isFinite(n));
-  if (!xs.length) return fallback;
-  return xs.reduce((a, b) => a + b, 0) / xs.length;
-}
-
-function calculateBallisticProfile(entries: Entry[]): BallisticProfile {
-  const V0 = safeAvg(entries.map((e) => e.V0), 800);
-  const BC = safeAvg(entries.map((e) => e.bcUsed ?? 0.25), 0.25);
-  const model = mostCommon(entries.map((e) => e.model), "G7") as BallisticProfile["model"];
-  const bulletWeightGr = entries[0]?.bulletWeightGr ?? 175;
-  const y0Cm = entries[0]?.y0Cm ?? 3.5;
-  const zeroDistanceM = safeAvg(
-    entries.map((e) => (e.zeroDistanceM ?? 100)),
-    100
-  );
-
-  const avgTemperature = safeAvg(entries.map((e) => e.temperature), 15);
-  const avgHumidity = safeAvg(entries.map((e) => e.humidity), 50);
-  const avgWindSpeed = safeAvg(entries.map((e) => e.windSpeed), 0);
-  const avgWindDirection = safeAvg(entries.map((e) => e.windDirection), 0);
+function profileFromEntries(entries: Entry[]): BallisticProfile {
+  if (!entries.length) {
+    // should not be called when empty; we have a calculator fallback elsewhere
+    return {
+      V0: 800,
+      BC: 0.25,
+      model: "G7",
+      bulletWeightGr: 175,
+      scopeHeightMm: 35,
+      zeroDistanceM: 100,
+      temperatureC: 15,
+      humidityPct: 50,
+      windSpeed: 0,
+      windDirectionDeg: 0,
+    };
+  }
 
   return {
-    V0,
-    BC,
-    model,
-    bulletWeightGr,
-    y0Cm,
-    zeroDistanceM,
-    avgTemperature,
-    avgHumidity,
-    avgWindSpeed,
-    avgWindDirection,
+    V0: avg(entries.map((e) => e.V0), 800),
+    BC: avg(entries.map((e) => safe(e.bcUsed, 0.25)), 0.25),
+    model: mostCommon<ModelKind>(entries.map((e) => e.model as ModelKind), "G7"),
+    bulletWeightGr: safe(entries[0].bulletWeightGr, 175),
+    scopeHeightMm: safe(entries[0].y0Cm, 3.5) * 10,
+    zeroDistanceM: avg(
+      entries.map((e) => safe(e.zeroDistanceM, Number.NaN)),
+      100
+    ),
+    temperatureC: avg(entries.map((e) => e.temperature), 15),
+    humidityPct: avg(entries.map((e) => e.humidity), 50),
+    windSpeed: avg(entries.map((e) => e.windSpeed), 0),
+    windDirectionDeg: avg(entries.map((e) => e.windDirection), 0),
   };
 }
 
-function roundToBallistic(x: number): number {
-  return Math.round(x * 10) / 10;
-}
-
-function makeRangeAverages(entries: Entry[]) {
-  // summary of how many actual entries exist at each range (for confidence display)
-  const map = new Map<number, { count: number }>();
-  for (const e of entries) {
-    const m = map.get(e.rangeM) || { count: 0 };
-    m.count += 1;
-    map.set(e.rangeM, m);
-  }
-  return map;
-}
-
-/* ---------------- Core: compute “pure” ballistic DOPE rows ---------------- */
-
-function buildDOPERow(rangeM: number, profile: BallisticProfile): DOPEEntry {
-  // We ask the physics engine for the hold at this range relative to the profile.zeroDistanceM.
-  // The engine should be already modeling zero offset internally; if it doesn’t, a simple
-  // difference between holds at (rangeM) and (zeroDistanceM) will still produce the same result.
-  const env = {
-    temperatureC: profile.avgTemperature,
-    humidityPct: profile.avgHumidity,
-    // optional fields (ignored by engine if not supported):
-    pressurehPa: profile.pressurehPa,
-    altitudeM: profile.altitudeM,
+function profileFromCalculator(state: ReturnType<typeof useApp>["state"]): BallisticProfile {
+  const c = state.calculator;
+  return {
+    V0: safe(c.V0, 800),
+    BC: safe(c.bc, 0.25),
+    model: (c.model as ModelKind) || "G7",
+    bulletWeightGr: safe(c.bulletWeightGr, 175),
+    scopeHeightMm: safe(c.y0Cm, 3.5) * 10,
+    zeroDistanceM: safe(c.zeroDistanceM, 100),
+    temperatureC: safe(c.temperature, 15),
+    humidityPct: safe(c.humidity, 50),
+    windSpeed: safe(c.windSpeed, 0),
+    windDirectionDeg: safe(c.windDirection, 0),
   };
+}
 
-  // Primary solve at the requested range
+function makeRangeCounts(entries: Entry[]): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const e of entries) m.set(e.rangeM, (m.get(e.rangeM) || 0) + 1);
+  return m;
+}
+
+function buildRow(rangeM: number, p: BallisticProfile): DOPEEntry {
   const t = solveTrajectory({
-    bc: profile.BC,
-    model: profile.model,
-    muzzleV: profile.V0,
-    bulletWeightGr: profile.bulletWeightGr,
-    zeroDistanceM: profile.zeroDistanceM,
-    scopeHeightMm: profile.y0Cm * 10,
+    bc: p.BC,
+    model: p.model,
+    muzzleV: p.V0,
+    bulletWeightGr: p.bulletWeightGr,
+    zeroDistanceM: p.zeroDistanceM,
+    scopeHeightMm: p.scopeHeightMm,
     rangeM,
-    env,
-    wind: { speed: profile.avgWindSpeed, directionDeg: profile.avgWindDirection },
+    env: { temperatureC: p.temperatureC, humidityPct: p.humidityPct },
+    wind: { speed: p.windSpeed, directionDeg: p.windDirectionDeg },
   });
 
-  // If your solveTrajectory already returns “holdMil / holdMoa relative to zero”, we’re done.
-  // If not, we compute a differential vs zero here as a fallback:
-  let elevationMil = Number.isFinite(t.holdMil) ? t.holdMil : 0;
-  let elevationMoa = Number.isFinite(t.holdMoa) ? t.holdMoa : elevationMil * 3.437746;
+  let mil = safe(t.holdMil, 0);
+  let moa = safe(t.holdMoa, mil * 3.437746);
 
-  // Fallback path: compute difference vs zero range if holds look suspiciously 0
-  if (Math.abs(elevationMil) < 1e-6 && Math.abs(rangeM - profile.zeroDistanceM) > 0.5) {
+  // If hold returned 0 away from zero distance, compute by differential drop
+  if (Math.abs(mil) < 1e-6 && Math.abs(rangeM - p.zeroDistanceM) > 0.5) {
     const atZero = solveTrajectory({
-      bc: profile.BC,
-      model: profile.model,
-      muzzleV: profile.V0,
-      bulletWeightGr: profile.bulletWeightGr,
-      zeroDistanceM: profile.zeroDistanceM,
-      scopeHeightMm: profile.y0Cm * 10,
-      rangeM: profile.zeroDistanceM,
-      env,
-      wind: { speed: profile.avgWindSpeed, directionDeg: profile.avgWindDirection },
+      bc: p.BC,
+      model: p.model,
+      muzzleV: p.V0,
+      bulletWeightGr: p.bulletWeightGr,
+      zeroDistanceM: p.zeroDistanceM,
+      scopeHeightMm: p.scopeHeightMm,
+      rangeM: p.zeroDistanceM,
+      env: { temperatureC: p.temperatureC, humidityPct: p.humidityPct },
+      wind: { speed: p.windSpeed, directionDeg: p.windDirectionDeg },
     });
-    // Convert drop differential to angular
-    const extraDropM = (t.drop ?? 0) - (atZero.drop ?? 0);
-    elevationMil = (extraDropM / Math.max(rangeM, 1)) * 1000;
-    elevationMoa = elevationMil * 3.437746;
+    const dDrop = safe(t.drop, 0) - safe(atZero.drop, 0);
+    mil = (dDrop / Math.max(rangeM, 1)) * 1000;
+    moa = mil * 3.437746;
   }
 
   return {
     range: Math.round(rangeM),
-    elevationMil: roundToBallistic(elevationMil),
-    elevationMoa: roundToBallistic(elevationMoa),
-    windageMil: 0, // keep zero in DOPE table; wind is session/day-specific
-    windageMoa: 0,
+    elevationMil: round10(mil),
+    elevationMoa: round10(moa),
     isCalculated: true,
-    actualEntries: 0, // filled later
-    confidence: "medium", // refined later
+    actualEntries: 0,
+    confidence: "medium",
   };
 }
 
-function generateDOPETable(allEntries: Entry[]): DOPEEntry[] {
-  if (!allEntries.length) return [];
-  const profile = calculateBallisticProfile(allEntries);
-  const rangeCounts = makeRangeAverages(allEntries);
-
-  const actualRanges = Array.from(rangeCounts.keys()).sort((a, b) => a - b);
-  const maxActual = actualRanges.length ? Math.max(...actualRanges) : 300;
-  const minActual = actualRanges.length ? Math.min(...actualRanges) : 50;
-
+function generateDOPETable(entries: Entry[], p: BallisticProfile): DOPEEntry[] {
+  const counts = makeRangeCounts(entries);
+  const actual = Array.from(counts.keys()).sort((a, b) => a - b);
+  const maxActual = actual.length ? Math.max(...actual) : 300;
   const step = maxActual <= 100 ? 10 : 50;
   const maxOut = Math.max(500, Math.ceil(maxActual / step) * step);
 
-  const wantedRanges = new Set<number>();
-  wantedRanges.add(Math.round(profile.zeroDistanceM));
-  for (let r = step; r <= maxOut; r += step) wantedRanges.add(r);
-  // ensure we include “odd” actual shot distances as well
-  for (const r of actualRanges) wantedRanges.add(Math.round(r));
+  const want = new Set<number>();
+  want.add(Math.round(p.zeroDistanceM));
+  for (let r = step; r <= maxOut; r += step) want.add(r);
+  actual.forEach((r) => want.add(Math.round(r)));
 
-  const rows = Array.from(wantedRanges)
+  const rows = Array.from(want)
     .sort((a, b) => a - b)
-    .map((r) => buildDOPERow(r, profile));
+    .map((r) => buildRow(r, p));
 
-  // fill “actualEntries” and confidence by proximity to real data
-  const sortedActual = actualRanges.sort((a, b) => a - b);
+  // annotate with confidence & counts
   for (const row of rows) {
-    // data points at exactly same range:
-    row.actualEntries = rangeCounts.get(row.range)?.count ?? 0;
-
-    // confidence from nearest actual range:
-    let near = Infinity;
-    for (const rr of sortedActual) near = Math.min(near, Math.abs(rr - row.range));
-    if (Math.abs(row.range - profile.zeroDistanceM) <= 1) row.confidence = "high";
-    else if (!Number.isFinite(near)) row.confidence = "low";
-    else if (near <= step / 2) row.confidence = "high";
-    else if (near <= step) row.confidence = "medium";
+    row.actualEntries = counts.get(row.range) || 0;
+    const nearest = actual.reduce(
+      (m, a) => Math.min(m, Math.abs(a - row.range)),
+      Number.POSITIVE_INFINITY
+    );
+    if (Math.abs(row.range - p.zeroDistanceM) <= 1) row.confidence = "high";
+    else if (!Number.isFinite(nearest)) row.confidence = "low";
+    else if (nearest <= step / 2) row.confidence = "high";
+    else if (nearest <= step) row.confidence = "medium";
     else row.confidence = "low";
   }
-
   return rows;
 }
 
-function formatElevation(mil: number, moa: number, units: "MIL" | "MOA"): string {
-  const val = units === "MIL" ? mil : moa;
-  if (Math.abs(val) < 0.05) return "0.0";
-  const dir = val > 0 ? "U" : "D";
-  return `${dir}${Math.abs(val).toFixed(1)}`;
+function formatElevation(mil: number, moa: number, units: "MIL" | "MOA") {
+  const v = units === "MIL" ? mil : moa;
+  if (Math.abs(v) < 0.05) return "0.0";
+  const dir = v > 0 ? "U" : "D";
+  return `${dir}${Math.abs(v).toFixed(1)}`;
 }
-
-function getConfidenceColor(c: "high" | "medium" | "low") {
-  switch (c) {
-    case "high":
-      return "text-green-600";
-    case "medium":
-      return "text-yellow-600";
-    default:
-      return "text-red-600";
-  }
-}
-
-function getConfidenceIcon(c: "high" | "medium" | "low") {
-  switch (c) {
-    case "high":
-      return "●";
-    case "medium":
-      return "◐";
-    default:
-      return "○";
-  }
-}
+const confColor = (c: DOPEEntry["confidence"]) =>
+  c === "high" ? "text-green-600" : c === "medium" ? "text-yellow-600" : "text-red-600";
+const confIcon = (c: DOPEEntry["confidence"]) => (c === "high" ? "●" : c === "medium" ? "◐" : "○");
 
 /* ---------------- Page ---------------- */
-
 export function DOPEPage() {
   const { state, setState, navigate } = useApp();
   const { session, entries, calculator } = state;
@@ -302,14 +257,15 @@ export function DOPEPage() {
   const [showDOPECards, setShowDOPECards] = useState(false);
   const [showStorageManager, setShowStorageManager] = useState(false);
 
+  // Ensure session exists
   if (!session) {
-    const defaultSession = {
+    const s = {
       id: crypto.randomUUID(),
       startedAt: new Date().toISOString(),
       title: "Default Session",
       place: "",
     };
-    setState({ ...state, session: defaultSession });
+    setState({ ...state, session: s });
     return (
       <div className="container max-w-7xl mx-auto p-4">
         <div className="flex items-center justify-center py-8">
@@ -319,50 +275,43 @@ export function DOPEPage() {
     );
   }
 
+  // Filter/sort entries
   const filteredEntries = entries
-    .filter((entry) => {
-      const inMin = !filterRange.min || entry.rangeM >= Number(filterRange.min);
-      const inMax = !filterRange.max || entry.rangeM <= Number(filterRange.max);
-      const notesOk = !filterNotes || (entry.notes || "").toLowerCase().includes(filterNotes.toLowerCase());
-      return inMin && inMax && notesOk;
+    .filter((e) => {
+      const okMin = !filterRange.min || e.rangeM >= Number(filterRange.min);
+      const okMax = !filterRange.max || e.rangeM <= Number(filterRange.max);
+      const okNotes =
+        !filterNotes || (e.notes || "").toLowerCase().includes(filterNotes.toLowerCase());
+      return okMin && okMax && okNotes;
     })
-    .sort((a, b) => {
-      if (sortBy === "date") {
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-      }
-      return a.rangeM - b.rangeM;
-    });
+    .sort((a, b) =>
+      sortBy === "date"
+        ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        : a.rangeM - b.rangeM
+    );
 
-  function createTableRows(): TableRow[] {
-    if (!showSessionHeaders) {
-      return filteredEntries.map((entry) => ({ type: "entry", entry }));
-    }
+  // Build table rows with (optional) session headers
+  const tableRows: TableRow[] = (() => {
+    if (!showSessionHeaders) return filteredEntries.map((entry) => ({ type: "entry", entry }));
     const rows: TableRow[] = [];
     const bySession = new Map<string, Entry[]>();
-    for (const e of filteredEntries) {
+    filteredEntries.forEach((e) => {
       if (!bySession.has(e.sessionId)) bySession.set(e.sessionId, []);
       bySession.get(e.sessionId)!.push(e);
-    }
-    for (const [sessionId, sesEntries] of bySession) {
-      if (!sesEntries.length) continue;
-      const isCurrent = sessionId === session.id;
+    });
+    for (const [sid, ses] of bySession) {
+      if (!ses.length) continue;
+      const isCurrent = sid === session.id;
       const sInfo = isCurrent
         ? session
-        : {
-            id: sessionId,
-            title: `Session ${sessionId.slice(0, 8)}`,
-            place: "",
-            startedAt: sesEntries[0].createdAt,
-          };
-
-      const first = sesEntries[0];
+        : { id: sid, title: `Session ${sid.slice(0, 8)}`, place: "", startedAt: ses[0].createdAt };
+      const first = ses[0];
       const bulletInfo = first.bulletWeightGr
         ? `${first.ammoName || "Unknown"} ${first.bulletWeightGr}gr`
         : first.ammoName || "Unknown";
-
       rows.push({
         type: "session",
-        sessionId,
+        sessionId: sid,
         sessionTitle: sInfo.title,
         sessionPlace: sInfo.place || "",
         sessionStarted: sInfo.startedAt,
@@ -373,25 +322,21 @@ export function DOPEPage() {
         windSpeed: first.windSpeed,
         windDirection: first.windDirection,
       });
-
-      for (const e of sesEntries) rows.push({ type: "entry", entry: e });
+      ses.forEach((e) => rows.push({ type: "entry", entry: e }));
     }
     return rows;
-  }
+  })();
 
-  const tableRows = createTableRows();
-
-  // DOPE cards (one per rifle+ammo group)
+  /* ----- DOPE cards: from data groups OR fallback to current calculator ----- */
   const dopeCards = (() => {
     const groups = groupEntriesByRifleAmmo(filteredEntries);
-    return Array.from(groups.values())
+    const cards = Array.from(groups.values())
       .filter((g) => g.length)
       .map((group) => {
         const first = group[0];
-        const profile = calculateBallisticProfile(group);
+        const p = profileFromEntries(group);
         const ranges = Array.from(new Set(group.map((e) => e.rangeM))).sort((a, b) => a - b);
-        const dope = generateDOPETable(group);
-
+        const dope = generateDOPETable(group, p);
         return {
           rifleName: first.firearmName || "Unknown Rifle",
           ammoName: first.ammoName || "Unknown Ammo",
@@ -399,27 +344,43 @@ export function DOPEPage() {
           minRange: ranges[0] ?? 100,
           maxRange: ranges[ranges.length - 1] ?? 300,
           dataPointCount: ranges.length,
-          ballisticProfile: profile,
+          ballisticProfile: p,
           dopeTable: dope,
         };
-      })
-      .sort((a, b) => a.rifleName.localeCompare(b.rifleName));
+      });
+
+    if (cards.length === 0) {
+      // Fallback: synthesize one DOPE card from calculator state so the page isn’t empty
+      const p = profileFromCalculator(state);
+      const dope = generateDOPETable([], p);
+      cards.push({
+        rifleName: state.calculator.firearmName || "Current Setup",
+        ammoName: state.calculator.ammoName || "Current Load",
+        bulletWeight: p.bulletWeightGr,
+        minRange: dope[0]?.range ?? 100,
+        maxRange: dope[dope.length - 1]?.range ?? 500,
+        dataPointCount: 0,
+        ballisticProfile: p,
+        dopeTable: dope,
+      });
+    }
+
+    return cards.sort((a, b) => a.rifleName.localeCompare(b.rifleName));
   })();
 
+  /* ----- actions ----- */
   const handleDeleteSession = () => {
     if (confirm("Delete current session? This will create a new default session but keep all entries.")) {
       deleteSession(state, setState);
       toast.success("Session deleted, new session created");
     }
   };
-
   const handleDeleteEntry = (id: string) => {
     if (confirm("Delete this entry?")) {
       deleteEntry(state, setState, id);
       toast.success("Entry deleted");
     }
   };
-
   const handleExportJSON = () => {
     const json = exportJSON(filteredEntries);
     const blob = new Blob([json], { type: "application/json" });
@@ -435,7 +396,6 @@ export function DOPEPage() {
     URL.revokeObjectURL(url);
     toast.success("Entries exported to JSON");
   };
-
   const handleExportSession = () => {
     const json = exportSessionJSON(entries, session);
     const blob = new Blob([json], { type: "application/json" });
@@ -451,7 +411,6 @@ export function DOPEPage() {
     URL.revokeObjectURL(url);
     toast.success("Session data exported to JSON");
   };
-
   const handleImportJSON = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -461,12 +420,12 @@ export function DOPEPage() {
       if (!file) return;
       try {
         const text = await file.text();
-        const shouldReplace = confirm(
+        const replace = confirm(
           ["How would you like to import this data?", "", "OK = Replace all current entries", "Cancel = Merge (add)"].join(
             "\n"
           )
         );
-        const result = importEntriesJSON(state, setState, text, shouldReplace ? "replace" : "merge");
+        const result = importEntriesJSON(state, setState, text, replace ? "replace" : "merge");
         if (result.errors.length) {
           const msg =
             `Import completed with errors:\n` +
@@ -475,20 +434,22 @@ export function DOPEPage() {
           toast.error(msg, { duration: 8000 });
         }
         if (result.imported > 0) {
-          toast.success(`Imported ${result.imported} entries${result.errors.length ? ` (${result.errors.length} errors)` : ""}`);
+          toast.success(
+            `Imported ${result.imported} entries${
+              result.errors.length ? ` (${result.errors.length} errors)` : ""
+            }`
+          );
         } else {
           toast.error("No valid entries found");
         }
-      } catch (err) {
-        console.error(err);
-        toast.error(`Import failed`);
+      } catch {
+        toast.error("Import failed");
       }
     };
     input.click();
   };
 
-  const getConfidenceColor = getConfidenceColor; // alias for template readability
-
+  /* ----- render ----- */
   return (
     <div className="container max-w-7xl mx-auto p-4 space-y-4">
       <div className="flex items-center justify-between">
@@ -624,10 +585,11 @@ export function DOPEPage() {
               {tableRows.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
-                    No entries found.{" "}
+                    No entries yet.{" "}
                     <button onClick={() => navigate("/log")} className="text-primary hover:underline">
                       Add your first entry
                     </button>
+                    . You can still view a DOPE card generated from your current calculator settings below.
                   </td>
                 </tr>
               ) : (
@@ -646,45 +608,42 @@ export function DOPEPage() {
                         </td>
                       </tr>
                     );
-                  } else {
-                    const e = row.entry;
-                    const elevMil = e.actualAdjMil?.up ?? 0;
-                    const elevMoa = e.actualAdjMoa?.up ?? 0;
-                    const windMil = e.actualAdjMil?.right ?? 0;
-                    const windMoa = e.actualAdjMoa?.right ?? 0;
-
-                    const windText =
-                      calculator.scopeUnits === "MIL"
-                        ? Math.abs(windMil) < 0.05
-                          ? "0.0"
-                          : `${windMil > 0 ? "L" : "R"}${Math.abs(windMil).toFixed(1)}`
-                        : Math.abs(windMoa) < 0.05
-                        ? "0.0"
-                        : `${windMoa > 0 ? "L" : "R"}${Math.abs(windMoa).toFixed(1)}`;
-
-                    return (
-                      <tr key={e.id} className="border-t hover:bg-muted/50">
-                        <td className="px-3 py-2">{new Date(e.createdAt).toLocaleDateString()}</td>
-                        <td className="px-3 py-2 font-mono">{e.rangeM}m</td>
-                        <td className="px-3 py-2">{e.firearmName || "N/A"}</td>
-                        <td className="px-3 py-2">{e.ammoName || "N/A"}</td>
-                        <td className="px-3 py-2 font-mono">
-                          {formatElevation(elevMil, elevMoa, calculator.scopeUnits)}
-                        </td>
-                        <td className="px-3 py-2 font-mono">{windText}</td>
-                        <td className="px-3 py-2">{e.groupSizeCm ? `${e.groupSizeCm}cm` : "N/A"}</td>
-                        <td className="px-3 py-2">{e.notes || "N/A"}</td>
-                        <td className="px-3 py-2">
-                          <button
-                            onClick={() => handleDeleteEntry(e.id)}
-                            className="text-destructive hover:text-destructive/80 text-xs"
-                          >
-                            Delete
-                          </button>
-                        </td>
-                      </tr>
-                    );
                   }
+                  const e = row.entry;
+                  const elevMil = e.actualAdjMil?.up ?? 0;
+                  const elevMoa = e.actualAdjMoa?.up ?? 0;
+                  const windMil = e.actualAdjMil?.right ?? 0;
+                  const windMoa = e.actualAdjMoa?.right ?? 0;
+
+                  const windText =
+                    calculator.scopeUnits === "MIL"
+                      ? Math.abs(windMil) < 0.05
+                        ? "0.0"
+                        : `${windMil > 0 ? "L" : "R"}${Math.abs(windMil).toFixed(1)}`
+                      : Math.abs(windMoa) < 0.05
+                      ? "0.0"
+                      : `${windMoa > 0 ? "L" : "R"}${Math.abs(windMoa).toFixed(1)}`;
+
+                  return (
+                    <tr key={e.id} className="border-t hover:bg-muted/50">
+                      <td className="px-3 py-2">{new Date(e.createdAt).toLocaleDateString()}</td>
+                      <td className="px-3 py-2 font-mono">{e.rangeM}m</td>
+                      <td className="px-3 py-2">{e.firearmName || "N/A"}</td>
+                      <td className="px-3 py-2">{e.ammoName || "N/A"}</td>
+                      <td className="px-3 py-2 font-mono">{formatElevation(elevMil, elevMoa, calculator.scopeUnits)}</td>
+                      <td className="px-3 py-2 font-mono">{windText}</td>
+                      <td className="px-3 py-2">{e.groupSizeCm ? `${e.groupSizeCm}cm` : "N/A"}</td>
+                      <td className="px-3 py-2">{e.notes || "N/A"}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => handleDeleteEntry(e.id)}
+                          className="text-destructive hover:text-destructive/80 text-xs"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
                 })
               )}
             </tbody>
@@ -693,18 +652,16 @@ export function DOPEPage() {
       </div>
 
       {/* Toggle DOPE cards */}
-      {filteredEntries.length > 0 && (
-        <div className="flex justify-center">
-          <button
-            onClick={() => setShowDOPECards((s) => !s)}
-            className="px-6 py-3 bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
-          >
-            {showDOPECards ? "Hide DOPE Card" : "Show DOPE Card"}
-          </button>
-        </div>
-      )}
+      <div className="flex justify-center">
+        <button
+          onClick={() => setShowDOPECards((s) => !s)}
+          className="px-6 py-3 bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
+        >
+          {showDOPECards ? "Hide DOPE Card" : "Show DOPE Card"}
+        </button>
+      </div>
 
-      {showDOPECards && dopeCards.length > 0 && (
+      {showDOPECards && (
         <div className="space-y-6">
           <h3 className="text-lg font-semibold">DOPE Cards</h3>
           {dopeCards.map((card, idx) => (
@@ -712,11 +669,13 @@ export function DOPEPage() {
               <div className="mb-4">
                 <h4 className="font-semibold text-lg">{card.rifleName}</h4>
                 <p className="text-sm text-muted-foreground">
-                  {card.ammoName} • {card.bulletWeight}gr • {card.dataPointCount} range
-                  {card.dataPointCount !== 1 ? "s" : ""} • {card.minRange}m - {card.maxRange}m
+                  {card.ammoName} • {card.bulletWeight}gr •{" "}
+                  {card.dataPointCount} range{card.dataPointCount !== 1 ? "s" : ""} • {card.minRange}m –{" "}
+                  {card.maxRange}m
                 </p>
               </div>
 
+              {/* Ballistic Profile */}
               <div className="mb-4 p-3 bg-muted">
                 <div className="text-sm font-medium mb-2">Ballistic Profile</div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
@@ -727,6 +686,7 @@ export function DOPEPage() {
                 </div>
               </div>
 
+              {/* DOPE table */}
               <div className="overflow-x-auto">
                 <table className="w-full text-xs border-collapse">
                   <thead>
@@ -744,9 +704,9 @@ export function DOPEPage() {
                         <td className="border px-2 py-1 font-mono">
                           {formatElevation(row.elevationMil, row.elevationMoa, calculator.scopeUnits)}
                         </td>
-                        <td className={`border px-2 py-1 ${getConfidenceColor(row.confidence)}`}>
+                        <td className={`border px-2 py-1 ${confColor(row.confidence)}`}>
                           <span className="flex items-center gap-1">
-                            <span>{getConfidenceIcon(row.confidence)}</span>
+                            <span>{confIcon(row.confidence)}</span>
                             <span>{row.confidence}</span>
                           </span>
                         </td>
