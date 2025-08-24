@@ -272,6 +272,21 @@ export function LogPage() {
   const updateLogForm = <K extends keyof LogForm>(field: K, value: LogForm[K]) =>
     setLogForm((prev) => ({ ...prev, [field]: value }));
 
+  // NEW: create-session handler (was missing)
+  const handleCreateNewSession = () => {
+    const s = {
+      id: crypto.randomUUID(),
+      startedAt: new Date().toISOString(),
+      title: newSessionTitle.trim() || "New Session",
+      place: newSessionPlace.trim() || "",
+    };
+    setState({ ...state, session: s });
+    setNewSessionTitle("");
+    setNewSessionPlace("");
+    setShowNewSession(false);
+    toast.success("New session created");
+  };
+
   // helpers
   const formatCalculatedHold = (value: number) => {
     if (Math.abs(value) < 0.05) return "0.0";
