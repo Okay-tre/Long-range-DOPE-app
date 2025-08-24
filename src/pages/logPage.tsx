@@ -1,11 +1,5 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useApp } from "../contexts/AppContext";
-
-// keep your existing handlers for session + saving
-import { makeSnapshotFromCalculator, saveEntryHandler, type LogForm, type CalcSnapshot } from "./log.handlers";
-import { newSession } from "./dope.handlers";
-
-// UI bits you already use
 import { SessionManager } from "../components/SessionManager";
 import { PresetSelectors } from "../components/PresetSelectors";
 import { EquipmentManager } from "../components/EquipmentManager";
@@ -14,10 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { toast } from "sonner@2.0.3";
 
-// 🆕 physics-based corrections (uses calcEngine + drag tables)
-import { suggestScopeCorrection } from "../lib/corrections";
+// keep your existing handlers/types
+import { makeSnapshotFromCalculator, saveEntryHandler, type LogForm, type CalcSnapshot } from "./log.handlers";
 
-// simple label helper
+import type { Weapon, AmmoProfile } from "../lib/appState";
+import { calculateAirDensity } from "../utils/ballistics";
+
+/* ---------- small presentational bits ---------- */
+
 const Label = ({ children }: { children: React.ReactNode }) => (
   <span className="text-sm">{children}</span>
 );
@@ -35,11 +33,10 @@ function NumberInput({
         value={displayValue}
         onChange={(e) => {
           const inputValue = e.target.value;
-          if (inputValue === "") {
-            onChange(null);
-          } else {
-            const numValue = Number(inputValue);
-            onChange(isNaN(numValue) ? null : numValue);
+          if (inputValue === "") onChange(null);
+          else {
+            const num = Number(inputValue);
+            onChange(isNaN(num) ? null : num);
           }
         }}
         step={step}
@@ -101,17 +98,29 @@ function KVDark({ k, v }: { k: string; v: string }) {
   );
 }
 
+/* ---------- page ---------- */
+
 export function LogPage() {
   const { state, setState, navigate } = useApp();
   const { session, calculator, entries } = state;
 
-  // 🔗 Selected weapon + ammo (needed for real solver)
-  const weapon = state.weapons?.find((w) => w.id === state.selectedWeaponId);
-  const ammo = weapon?.ammo?.find((a) => a.id === state.selectedAmmoId);
+  // ---------------- selection helpers (robust, with fallbacks) ----------------
+  const selectedWeapon: Weapon | undefined = useMemo(() => {
+    const byId = state.weapons.find(w => w.id === state.selectedWeaponId);
+    if (byId && byId.ammo?.length) return byId;
+    // fallback: first weapon with ammo, or first weapon
+    return state.weapons.find(w => w.ammo?.length) ?? state.weapons[0];
+  }, [state.weapons, state.selectedWeaponId]);
 
-  // Form state
+  const selectedAmmo: AmmoProfile | undefined = useMemo(() => {
+    if (!selectedWeapon) return undefined;
+    const byId = selectedWeapon.ammo.find(a => a.id === state.selectedAmmoId);
+    return byId ?? selectedWeapon.ammo[0];
+  }, [selectedWeapon, state.selectedAmmoId]);
+
+  // ---------------- form state ----------------
   const [logForm, setLogForm] = useState<LogForm>({
-    rangeM: 300,
+    rangeM: calculator?.X ?? 300,
     offsetUpCm: 0,
     offsetRightCm: 0,
     groupSizeCm: null,
@@ -121,126 +130,193 @@ export function LogPage() {
     actualAdjMoa: { up: null, right: null },
   });
 
-  // Scope readings (U/D/L/R strings)
+  // Simple scope reading strings (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
   const [scopeElevation, setScopeElevation] = useState<string>("");
   const [scopeWindage, setScopeWindage] = useState<string>("");
 
+  // snapshot we render in the “Calculator Snapshot” card
   const [snapshot, setSnapshot] = useState<CalcSnapshot | null>(null);
 
-  // Preset manager state
-  const [showPresetManager, setShowPresetManager] = useState(false);
-
-  // New session modal
+  // new session dialog
+  const [showNewSession, setShowNewSession] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState("");
   const [newSessionPlace, setNewSessionPlace] = useState("");
 
-  // Session stats
-  const sessionEntries = entries.filter((e) => e.sessionId === session?.id);
-  const validGroups = sessionEntries.filter((e) => e.groupSizeCm && e.groupSizeCm > 0);
-  const avgGroupSize =
-    validGroups.length > 0
-      ? (validGroups.reduce((sum, e) => sum + (e.groupSizeCm || 0), 0) / validGroups.length).toFixed(1)
-      : null;
+  // presets panel toggle
+  const [showPresetManager, setShowPresetManager] = useState(false);
 
-  // Parse "U2.5" style input
+  // ---------------- averages for header ----------------
+  const sessionEntries = entries.filter(e => e.sessionId === session?.id);
+  const validGroups = sessionEntries.filter(e => e.groupSizeCm && e.groupSizeCm > 0);
+  const avgGroupSize = validGroups.length
+    ? (validGroups.reduce((s, e) => s + (e.groupSizeCm as number), 0) / validGroups.length).toFixed(1)
+    : null;
+
+  // ---------------- scope reading parsing ----------------
   const parseScopeReading = (reading: string) => {
     if (!reading.trim()) return null;
-    const match = reading.trim().match(/^([UDLR])(\d*\.?\d*)$/i);
-    if (!match) return null;
-    const direction = match[1].toUpperCase();
-    const value = parseFloat(match[2]);
-    if (isNaN(value)) return null;
-    return { direction, value };
+    const m = reading.trim().match(/^([UDLR])(\d*\.?\d*)$/i);
+    if (!m) return null;
+    const dir = m[1].toUpperCase();
+    const val = parseFloat(m[2]);
+    if (isNaN(val)) return null;
+    return { direction: dir as "U"|"D"|"L"|"R", value: val };
   };
 
-  // Convert scope readings → form values (actualAdj*)
   useEffect(() => {
-    const elevationReading = parseScopeReading(scopeElevation);
-    const windageReading = parseScopeReading(scopeWindage);
+    const elev = parseScopeReading(scopeElevation);
+    const wind = parseScopeReading(scopeWindage);
 
     if (calculator.scopeUnits === "MIL") {
-      const elev = elevationReading ? (elevationReading.direction === "U" ? elevationReading.value : -elevationReading.value) : null;
-      const wind = windageReading ? (windageReading.direction === "R" ? windageReading.value : -windageReading.value) : null;
-      setLogForm((prev) => ({ ...prev, actualAdjMil: { up: elev, right: wind }, actualAdjMoa: { up: null, right: null } }));
+      const up = elev ? (elev.direction === "U" ? elev.value : -elev.value) : null;
+      const right = wind ? (wind.direction === "R" ? wind.value : -wind.value) : null;
+      setLogForm(prev => ({ ...prev, actualAdjMil: { up, right }, actualAdjMoa: { up: null, right: null } }));
     } else {
-      const elev = elevationReading ? (elevationReading.direction === "U" ? elevationReading.value : -elevationReading.value) : null;
-      const wind = windageReading ? (windageReading.direction === "R" ? windageReading.value : -windageReading.value) : null;
-      setLogForm((prev) => ({ ...prev, actualAdjMoa: { up: elev, right: wind }, actualAdjMil: { up: null, right: null } }));
+      const up = elev ? (elev.direction === "U" ? elev.value : -elev.value) : null;
+      const right = wind ? (wind.direction === "R" ? wind.value : -wind.value) : null;
+      setLogForm(prev => ({ ...prev, actualAdjMoa: { up, right }, actualAdjMil: { up: null, right: null } }));
     }
   }, [scopeElevation, scopeWindage, calculator.scopeUnits]);
 
-  // Ensure a session exists
+  // ---------------- ensure we have a session ----------------
   useEffect(() => {
     if (!session) {
-      const s = { id: crypto.randomUUID(), startedAt: new Date().toISOString(), title: "Default Session", place: "" };
+      const s = {
+        id: crypto.randomUUID(),
+        startedAt: new Date().toISOString(),
+        title: "Default Session",
+        place: ""
+      };
       setState({ ...state, session: s });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
-  // Take a calculator snapshot
-  const handleUseCurrentSnapshot = () => {
-    const newSnapshot = makeSnapshotFromCalculator(state);
-    setSnapshot(newSnapshot);
-    setLogForm((prev) => ({ ...prev, rangeM: calculator.X }));
-    toast.success("Used current calculator settings");
+  // ---------------- robust snapshot builder (uses selection + safe fallbacks) ----------------
+  const buildSnapshotFromSelection = (): CalcSnapshot => {
+    const w = selectedWeapon;
+    const a = selectedAmmo;
+
+    const V0 = a?.V0 ?? 800;
+    const model = (a?.model ?? "G7") as "G1" | "G7" | "noDrag";
+    const bcUsed = a?.bc ?? 0.25;
+    const bulletWeightGr = a?.bulletWeightGr ?? 140;
+    const scopeHeightMm = a?.scopeHeightMm ?? 35;
+    const zeroDistanceM = a?.zeroDistanceM ?? 100;
+
+    // Prefer calculator live env if present; fallback to ammo zero env; else constants
+    const temperature = (state.calculator as any)?.temperatureC ?? a?.zeroEnv?.temperatureC ?? 15;
+    const humidity = (state.calculator as any)?.humidityPct ?? a?.zeroEnv?.humidityPct ?? 50;
+    const windSpeed = (state.calculator as any)?.windSpeed ?? 0;
+    const windDirection = (state.calculator as any)?.windDirection ?? 0;
+
+    const rhoUsed = calculateAirDensity(temperature, humidity);
+
+    const snap: CalcSnapshot = {
+      firearmName: w?.name ?? "—",
+      ammoName: a?.name || a?.ammoName || "—",
+      V0,
+      model,
+      bcUsed,
+      bulletWeightGr,
+      y0Cm: scopeHeightMm / 10,
+      zeroDistanceM,
+      temperature,
+      humidity,
+      windSpeed,
+      windDirection,
+      barrelLengthIn: w?.barrelLengthIn ?? 20,
+      twistRateIn: w?.twistRateIn ?? 8,
+      rhoUsed,
+    };
+    return snap;
   };
 
+  // “Use current settings” button
+  const handleUseCurrentSnapshot = () => {
+    const snap = buildSnapshotFromSelection();
+    setSnapshot(snap);
+    setLogForm(prev => ({
+      ...prev,
+      rangeM: calculator?.X ?? prev.rangeM ?? snap.zeroDistanceM ?? 100,
+    }));
+    toast.success("Used current equipment & ammo");
+  };
+
+  // auto-load snapshot on first render and whenever selection/equipment changes
   useEffect(() => {
-    if (!snapshot) handleUseCurrentSnapshot();
+    const hasSomething = !!selectedWeapon && !!selectedAmmo;
+    if (!hasSomething) return;
+    setSnapshot(buildSnapshotFromSelection());
+    // also default the range to calculator X if present
+    setLogForm(prev => ({ ...prev, rangeM: calculator?.X ?? prev.rangeM ?? (snapshot?.zeroDistanceM ?? 100) }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [state.weapons, state.selectedWeaponId, state.selectedAmmoId]);
 
-  const updateLogForm = (field: keyof LogForm, value: any) => setLogForm((p) => ({ ...p, [field]: value }));
+  // ---------------- save entry ----------------
+  const handleSaveEntry = () => {
+    if (!session) {
+      toast.error("No active session. Please wait for session to be created.");
+      return;
+    }
+    if (!snapshot) {
+      toast.error("Please use current calculator snapshot first");
+      return;
+    }
+    try {
+      saveEntryHandler(state, setState, session.id, logForm, snapshot);
+      toast.success("Entry saved successfully");
 
-  const handleNewSession = () => {
-    newSession(state, setState, newSessionTitle.trim() || undefined, newSessionPlace.trim() || undefined);
+      // reset user inputs but keep range (nice UX)
+      setLogForm({
+        rangeM: calculator?.X ?? logForm.rangeM ?? snapshot.zeroDistanceM ?? 100,
+        offsetUpCm: 0,
+        offsetRightCm: 0,
+        groupSizeCm: null,
+        shots: 5,
+        notes: "",
+        actualAdjMil: { up: null, right: null },
+        actualAdjMoa: { up: null, right: null },
+      });
+      setScopeElevation("");
+      setScopeWindage("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save entry");
+    }
+  };
+
+  const updateLogForm = <K extends keyof LogForm>(field: K, value: LogForm[K]) => {
+    setLogForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  // ---------------- new session dialog ----------------
+  const handleCreateNewSession = () => {
+    const s = {
+      id: crypto.randomUUID(),
+      startedAt: new Date().toISOString(),
+      title: newSessionTitle.trim() || "New Session",
+      place: newSessionPlace.trim() || "",
+    };
+    setState({ ...state, session: s });
     setNewSessionTitle("");
     setNewSessionPlace("");
+    setShowNewSession(false);
     toast.success("New session created");
   };
 
-  // ==== 🧠 Physics-based suggestion (memoized) ====
-  // Build "current environment" from snapshot if available; fall back to reasonable defaults.
-  const envNow = useMemo(() => {
-    const t = snapshot?.temperature ?? 20;
-    const h = snapshot?.humidity ?? 50;
-    // If you store pressure/altitude elsewhere, wire them here. Defaults are fine if not present.
-    const pressure = 1013;
-    const altitude = 0;
-    return { temperatureC: t, humidityPct: h, pressurehPa: pressure, altitudeM: altitude };
-  }, [snapshot]);
-
-  const windSpeed = snapshot?.windSpeed ?? 0;
-  const windAngle = snapshot?.windDirection ?? 90;
-
-  const suggestion = useMemo(() => {
-    if (!weapon || !ammo || !logForm.rangeM || logForm.rangeM <= 0) return null;
-    try {
-      return suggestScopeCorrection({
-        ammo,
-        env: envNow,
-        rangeM: logForm.rangeM,
-        windSpeed,
-        windAngle,
-        offsetUpCm: logForm.offsetUpCm || 0,
-        offsetRightCm: logForm.offsetRightCm || 0,
-        scopeUnits: weapon.scopeUnits,
-      });
-    } catch (e) {
-      console.warn("suggestScopeCorrection failed:", e);
-      return null;
-    }
-  }, [weapon, ammo, envNow, windSpeed, windAngle, logForm.rangeM, logForm.offsetUpCm, logForm.offsetRightCm]);
-
-  // Display helpers for old snapshot holds (legacy)
-  const formatCalculatedHold = (value: number, units: "MIL" | "MOA"): string => {
-    if (Math.abs(value) < 0.05) return `0.0`;
-    const direction = value > 0 ? "U" : "D";
-    return `${direction}${Math.abs(value).toFixed(1)}`;
-    // (windage uses L/R; this was only for the legacy snapshot block)
+  // ---------------- display helpers ----------------
+  const formatCalculatedHold = (value: number, units: 'MIL' | 'MOA') => {
+    if (Math.abs(value) < 0.05) return "0.0";
+    const dir = value > 0 ? 'U' : 'D';
+    return `${dir}${Math.abs(value).toFixed(1)}`;
+  };
+  const formatCalculatedWindage = (value: number) => {
+    if (Math.abs(value) < 0.05) return "0.0";
+    const dir = value > 0 ? 'L' : 'R';
+    return `${dir}${Math.abs(value).toFixed(1)}`;
   };
 
+  // ---------------- loading state ----------------
   if (!session) {
     return (
       <div className="container max-w-3xl mx-auto p-4">
@@ -258,18 +334,20 @@ export function LogPage() {
         <div className="text-sm text-muted-foreground">
           <div className="flex flex-col items-end gap-1">
             <div>{session.place ? `${session.title} @ ${session.place}` : session.title}</div>
-            {avgGroupSize && <div className="text-xs">Avg Group: {avgGroupSize}cm ({validGroups.length} groups)</div>}
+            {avgGroupSize && (
+              <div className="text-xs">Avg Group: {avgGroupSize}cm ({validGroups.length} groups)</div>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Session Management */}
+      {/* Session management */}
       <div className="p-2 border bg-card">
         <div className="flex items-center justify-between">
           <div className="flex-1 min-w-0">
             <SessionManager compact={true} showNewSession={false} />
           </div>
-          <Dialog>
+          <Dialog open={showNewSession} onOpenChange={setShowNewSession}>
             <DialogTrigger asChild>
               <Button variant="outline" size="sm" className="text-xs px-2 py-1 ml-2">
                 New Session
@@ -278,13 +356,12 @@ export function LogPage() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Create New Session</DialogTitle>
-                <DialogDescription>Create a new shooting session with a name and location.</DialogDescription>
+                <DialogDescription>Name and location (optional).</DialogDescription>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="new-title" className="text-sm font-medium">Session Name</label>
+                  <label className="text-sm font-medium">Session Name</label>
                   <input
-                    id="new-title"
                     className="w-full px-2 py-1 mt-1 border"
                     value={newSessionTitle}
                     onChange={(e) => setNewSessionTitle(e.target.value)}
@@ -292,18 +369,19 @@ export function LogPage() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="new-place" className="text-sm font-medium">Location/Place</label>
+                  <label className="text-sm font-medium">Location/Place</label>
                   <input
-                    id="new-place"
                     className="w-full px-2 py-1 mt-1 border"
                     value={newSessionPlace}
                     onChange={(e) => setNewSessionPlace(e.target.value)}
-                    placeholder="e.g., Local Range, Camp Perry, etc."
+                    placeholder="e.g., Local Range"
                   />
                 </div>
                 <div className="flex gap-2">
-                  <Button onClick={handleNewSession}>Create Session</Button>
-                  <Button variant="outline">Cancel</Button>
+                  <Button onClick={handleCreateNewSession}>Create Session</Button>
+                  <Button variant="outline" onClick={() => setShowNewSession(false)}>
+                    Cancel
+                  </Button>
                 </div>
               </div>
             </DialogContent>
@@ -311,12 +389,12 @@ export function LogPage() {
         </div>
       </div>
 
-      {/* Quick Presets */}
+      {/* Quick presets */}
       <div className="p-3 border bg-card">
-        <PresetSelectors onManagePresets={() => setShowPresetManager((s) => !s)} />
+        <PresetSelectors onManagePresets={() => setShowPresetManager(s => !s)} />
       </div>
 
-      {/* Equipment Manager (Collapsible) */}
+      {/* Equipment manager (collapsible) */}
       <Collapsible open={showPresetManager} onOpenChange={setShowPresetManager}>
         <CollapsibleContent>
           <div className="p-3 border bg-card">
@@ -349,7 +427,7 @@ export function LogPage() {
             )}
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm mb-2">
-              <KV k="V₀" v={`${snapshot.V0} m/s`} />
+              <KV k="V₀" v={`${Math.round(snapshot.V0)} m/s`} />
               <KV k="Model" v={snapshot.model} />
               <KV k="BC" v={snapshot.bcUsed.toString()} />
               <KV k="Bullet Weight" v={`${snapshot.bulletWeightGr}gr`} />
@@ -362,7 +440,9 @@ export function LogPage() {
 
             {calculator.lastResult && (
               <div className="mb-2 pt-2 border-t">
-                <div className="text-xs font-medium mb-1 text-muted-foreground">Calculated Holds ({calculator.scopeUnits})</div>
+                <div className="text-xs font-medium mb-1 text-muted-foreground">
+                  Calculated Holds ({calculator.scopeUnits})
+                </div>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   <KV
                     k="Elevation"
@@ -375,14 +455,11 @@ export function LogPage() {
                     k="Windage"
                     v={
                       calculator.lastResult.windDrift
-                        ? (() => {
-                            const base = calculator.lastResult.windDrift / calculator.X; // radians approx
-                            const mil = base * 1000;
-                            const moa = mil * 3.438;
-                            return calculator.scopeUnits === "MIL"
-                              ? `${mil >= 0 ? "L" : "R"}${Math.abs(mil).toFixed(1)}`
-                              : `${moa >= 0 ? "L" : "R"}${Math.abs(moa).toFixed(1)}`;
-                          })()
+                        ? formatCalculatedWindage(
+                            calculator.scopeUnits === "MIL"
+                              ? (calculator.lastResult.windDrift / calculator.X) * 1000
+                              : (calculator.lastResult.windDrift / calculator.X) * 3438
+                          )
                         : "0.0"
                     }
                   />
@@ -410,58 +487,67 @@ export function LogPage() {
         )}
       </section>
 
-      {/* 🔥 Physics-based Scope Adjustment (replaces old arithmetic) */}
-      <section className="p-4 bg-slate-800 text-white border border-slate-600">
+      {/* Static Scope Adjustment Calculator */}
+      <section className="p-4 bg-slate-800 text-white border border-slate-600 calculation-results-section">
         <div className="flex items-center gap-3 mb-3">
           <span className="text-xl">🎯</span>
-          <h3 className="font-bold text-white text-lg">Scope Adjustment (Ballistics Engine)</h3>
+          <h3 className="font-bold text-white text-lg">Scope Adjustment Calculator</h3>
         </div>
 
-        {!weapon || !ammo ? (
-          <div className="text-slate-300 text-sm">Select a rifle and ammo on the Equipment page.</div>
-        ) : !suggestion ? (
-          <div className="text-slate-300 text-sm">Enter range and offsets to get a suggestion.</div>
-        ) : (
+        {logForm.rangeM > 0 && (logForm.offsetUpCm !== 0 || logForm.offsetRightCm !== 0) ? (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
                 <div className="text-sm font-semibold text-white mb-1 uppercase tracking-wide">
-                  {suggestion.units} Adjustments
+                  {calculator.scopeUnits} Adjustments
                 </div>
+                {/* Elevation */}
                 <KVDark
-                  k="Predicted from zero (elev)"
-                  v={`${suggestion.predictedDial.up >= 0 ? "U" : "D"}${Math.abs(suggestion.predictedDial.up).toFixed(2)}`}
+                  k="Elevation"
+                  v={
+                    calculator.scopeUnits === "MIL"
+                      ? `${(-logForm.offsetUpCm * 10) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
+                          (-logForm.offsetUpCm * 10) / logForm.rangeM
+                        ).toFixed(2)}`
+                      : `${(-logForm.offsetUpCm * 34.38) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
+                          (-logForm.offsetUpCm * 34.38) / logForm.rangeM
+                        ).toFixed(2)}`
+                  }
                 />
+                {/* Windage */}
                 <KVDark
-                  k="Extra from group offset (elev)"
-                  v={`${suggestion.correctionFromOffset.up >= 0 ? "U" : "D"}${Math.abs(suggestion.correctionFromOffset.up).toFixed(2)}`}
-                />
-                <KVDark
-                  k="Final dial (elev)"
-                  v={`${suggestion.finalDial.up >= 0 ? "U" : "D"}${Math.abs(suggestion.finalDial.up).toFixed(2)}`}
-                />
-                <div className="h-2" />
-                <KVDark
-                  k="Extra from group offset (wind)"
-                  v={`${suggestion.correctionFromOffset.right >= 0 ? "R" : "L"}${Math.abs(suggestion.correctionFromOffset.right).toFixed(2)}`}
-                />
-                <KVDark
-                  k="Final dial (wind)"
-                  v={`${suggestion.finalDial.right >= 0 ? "R" : "L"}${Math.abs(suggestion.finalDial.right).toFixed(2)}`}
+                  k="Windage"
+                  v={
+                    calculator.scopeUnits === "MIL"
+                      ? `${(-logForm.offsetRightCm * 10) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
+                          (-logForm.offsetRightCm * 10) / logForm.rangeM
+                        ).toFixed(2)}`
+                      : `${(-logForm.offsetRightCm * 34.38) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
+                          (-logForm.offsetRightCm * 34.38) / logForm.rangeM
+                        ).toFixed(2)}`
+                  }
                 />
               </div>
             </div>
-
-            <div className="mt-3 pt-2 px-3 py-2 bg-slate-700/50 border-t border-slate-600 text-xs">
-              <div>
-                TOF {suggestion.raw.tof.toFixed(2)} s • Impact {suggestion.raw.impactVel.toFixed(0)} m/s • Drop{" "}
-                {suggestion.raw.dropM.toFixed(2)} m • Drift {suggestion.raw.driftM.toFixed(2)} m
-              </div>
-              <div className="text-slate-300 mt-1">
-                Predicted dial uses your zero distance & scope height, drag model (G1/G7), BC, MV, and zero-vs-current environment.
-              </div>
+            <div className="mt-3 pt-2 px-3 py-2 bg-slate-700/50 border-t border-slate-600">
+              <p className="text-sm text-slate-200 flex items-center gap-2">
+                <span className="text-lg">💡</span>
+                <span>
+                  Adjustments based on group center offset at {logForm.rangeM}m range. Positive values indicate upward/rightward
+                  corrections needed.
+                </span>
+              </p>
             </div>
           </>
+        ) : (
+          <div className="text-center py-6">
+            <p className="text-slate-300 text-sm">
+              Enter range and offset values in the form below to calculate scope adjustments
+            </p>
+            <p className="text-slate-400 text-xs mt-2">
+              This calculator will show you the exact {calculator.scopeUnits} adjustments needed for your scope
+            </p>
+          </div>
         )}
       </section>
 
@@ -479,7 +565,7 @@ export function LogPage() {
           <NumberInput
             label="Number of shots"
             value={logForm.shots}
-            onChange={(shots) => updateLogForm("shots", shots)}
+            onChange={(shots) => updateLogForm("shots", shots || 5)}
             step="1"
           />
           <NumberInput
@@ -505,12 +591,22 @@ export function LogPage() {
           />
         </div>
 
-        {/* Current Scope Reading */}
+        {/* current scope reading */}
         <div className="mb-3 pt-3 border-t">
           <h4 className="font-medium mb-2">Current scope reading ({calculator.scopeUnits})</h4>
           <div className="grid grid-cols-2 gap-3">
-            <TextInput label="Elevation" value={scopeElevation} onChange={setScopeElevation} placeholder="e.g., U2.5 or D1.2" />
-            <TextInput label="Windage" value={scopeWindage} onChange={setScopeWindage} placeholder="e.g., R0.8 or L3.1" />
+            <TextInput
+              label="Elevation"
+              value={scopeElevation}
+              onChange={setScopeElevation}
+              placeholder="e.g., U2.5 or D1.2"
+            />
+            <TextInput
+              label="Windage"
+              value={scopeWindage}
+              onChange={setScopeWindage}
+              placeholder="e.g., R0.8 or L3.1"
+            />
           </div>
           <p className="text-xs text-muted-foreground mt-2">
             Enter scope adjustments as U/D for elevation and L/R for windage (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
@@ -527,48 +623,27 @@ export function LogPage() {
         </div>
       </section>
 
-      {/* Save/Navigation */}
+      {/* Actions */}
       <section className="flex gap-3">
         <button
-          onClick={() => {
-            if (!session) {
-              toast.error("No active session. Please wait for session to be created.");
-              return;
-            }
-            if (!snapshot) {
-              toast.error("Please use current calculator snapshot first");
-              return;
-            }
-            try {
-              saveEntryHandler(state, setState, session.id, logForm, snapshot);
-              toast.success("Entry saved successfully");
-              setLogForm({
-                rangeM: calculator.X,
-                offsetUpCm: 0,
-                offsetRightCm: 0,
-                groupSizeCm: null,
-                shots: 5,
-                notes: "",
-                actualAdjMil: { up: null, right: null },
-                actualAdjMoa: { up: null, right: null },
-              });
-              setScopeElevation("");
-              setScopeWindage("");
-            } catch (error) {
-              toast.error(error instanceof Error ? error.message : "Failed to save entry");
-            }
-          }}
-          disabled={!snapshot || !logForm.rangeM || logForm.rangeM <= 0}
+          onClick={handleSaveEntry}
+          disabled={!snapshot || logForm.rangeM <= 0}
           className="px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Save Entry
         </button>
 
-        <button onClick={() => navigate("/calc")} className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80">
+        <button
+          onClick={() => navigate("/calc")}
+          className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+        >
           ← Back to Calculator
         </button>
 
-        <button onClick={() => navigate("/dope")} className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80">
+        <button
+          onClick={() => navigate("/dope")}
+          className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+        >
           View DOPE →
         </button>
       </section>
