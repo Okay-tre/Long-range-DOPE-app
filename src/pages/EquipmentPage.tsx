@@ -1,3 +1,4 @@
+// src/pages/EquipmentPage.tsx
 import React from "react";
 import { useApp } from "../contexts/AppContext";
 import type { Weapon, AmmoProfile } from "../lib/appState";
@@ -9,26 +10,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Plus, Trash2, Wrench } from "lucide-react";
 import { toast } from "sonner@2.0.3";
 
-/* ---------- small helpers ---------- */
-
 function NumberInput({
-  id,
-  label,
-  value,
-  onChange,
-  step = "any",
-  className = "",
-}: {
-  id: string;
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  step?: string;
-  className?: string;
-}) {
+  id, label, value, onChange, step = "any", className = ""
+}: { id: string; label: string; value: number; onChange: (v: number) => void; step?: string; className?: string }) {
   return (
     <div className={className}>
-      <Label htmlFor={id} className="text-sm">{label}</Label>
+      <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
         type="number"
@@ -40,21 +27,19 @@ function NumberInput({
   );
 }
 
-/* =================================== */
-/*            Equipment Page           */
-/* =================================== */
+// single place for safe defaults
+const zeroEnvDefaults = { temperatureC: 15, pressurehPa: 1013, humidityPct: 50, altitudeM: 0 };
+const ensureZeroEnv = (a: Partial<AmmoProfile> | undefined) => ({
+  ...zeroEnvDefaults,
+  ...(a?.zeroEnv ?? {})
+});
 
 export function EquipmentPage() {
   const { state, setState } = useApp();
   const { weapons, selectedWeaponId, selectedAmmoId } = state;
 
-  /* ---------- state mutators ---------- */
-
-  const selectWeapon = (id: string | undefined) =>
-    setState({ ...state, selectedWeaponId: id });
-
-  const selectAmmo = (id: string | undefined) =>
-    setState({ ...state, selectedAmmoId: id });
+  const selectWeapon = (id: string | undefined) => setState({ ...state, selectedWeaponId: id });
+  const selectAmmo = (id: string | undefined) => setState({ ...state, selectedAmmoId: id });
 
   const addWeapon = () => {
     const w: Weapon = {
@@ -65,31 +50,18 @@ export function EquipmentPage() {
       twistRateIn: 8,
       ammo: [],
     };
-    setState({
-      ...state,
-      weapons: [...weapons, w],
-      selectedWeaponId: w.id,
-      selectedAmmoId: undefined,
-    });
+    setState({ ...state, weapons: [...weapons, w], selectedWeaponId: w.id, selectedAmmoId: undefined });
     toast.success("Rifle added");
   };
 
   const removeWeapon = (id: string) => {
     const next = weapons.filter((w) => w.id !== id);
-    setState({
-      ...state,
-      weapons: next,
-      selectedWeaponId: next[0]?.id,
-      selectedAmmoId: undefined,
-    });
+    setState({ ...state, weapons: next, selectedWeaponId: next[0]?.id, selectedAmmoId: undefined });
     toast.success("Rifle removed");
   };
 
   const patchWeapon = (id: string, patch: Partial<Weapon>) => {
-    setState({
-      ...state,
-      weapons: weapons.map((w) => (w.id === id ? { ...w, ...patch } : w)),
-    });
+    setState({ ...state, weapons: weapons.map((w) => (w.id === id ? { ...w, ...patch } : w)) });
   };
 
   const addAmmo = (weaponId: string) => {
@@ -103,15 +75,13 @@ export function EquipmentPage() {
       V0: 800,
       zeroDistanceM: 100,
       scopeHeightMm: 35,
-      zeroEnv: { temperatureC: 15, pressurehPa: 1013, humidityPct: 50, altitudeM: 0 },
+      zeroEnv: { ...zeroEnvDefaults },
     };
     setState({
       ...state,
-      weapons: weapons.map((w) =>
-        w.id === weaponId ? { ...w, ammo: [...w.ammo, a] } : w
-      ),
+      weapons: weapons.map((w) => (w.id === weaponId ? { ...w, ammo: [...w.ammo, a] } : w)),
       selectedWeaponId: weaponId,
-      selectedAmmoId: a.id, // auto-open the new ammo
+      selectedAmmoId: a.id,
     });
     toast.success("Ammo added");
   };
@@ -128,109 +98,69 @@ export function EquipmentPage() {
   const patchAmmo = (weaponId: string, ammoId: string, patch: Partial<AmmoProfile>) => {
     const w = weapons.find((x) => x.id === weaponId);
     if (!w) return;
-    const nextAmmo = w.ammo.map((a) => (a.id === ammoId ? { ...a, ...patch } : a));
+    const nextAmmo = w.ammo.map((a) =>
+      a.id === ammoId ? { ...a, ...patch, zeroEnv: ensureZeroEnv({ zeroEnv: { ...(a as any).zeroEnv, ...(patch.zeroEnv ?? {}) } }) } : a
+    );
     patchWeapon(weaponId, { ammo: nextAmmo });
   };
 
   const saveAll = () => {
-    // persistence already happens via AppContext saveState effect; this forces a write + UX signal
-    setState({ ...state });
+    setState({ ...state }); // trigger persistence hook
     toast.success("Equipment saved");
   };
 
-  /* ---------- render ---------- */
-
   return (
     <div className="container max-w-6xl mx-auto p-3 space-y-4">
-      {/* Title + action bar (buttons UNDER the title) */}
-      <header className="mb-1">
+      {/* header */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Wrench className="h-6 w-6 text-primary" />
           <h1 className="text-xl font-semibold">Equipment & Ammunition</h1>
         </div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <Button onClick={addWeapon} size="sm">
-            <Plus className="h-4 w-4 mr-1" /> Add Rifle
-          </Button>
-          <Button variant="outline" size="sm" onClick={saveAll}>
-            Save All Changes
-          </Button>
+        <div className="flex gap-2">
+          <Button onClick={addWeapon} size="sm"><Plus className="h-4 w-4 mr-1" /> Add Rifle</Button>
+          <Button variant="outline" size="sm" onClick={saveAll}>Save All Changes</Button>
         </div>
-      </header>
+      </div>
 
-      {/* Weapon list */}
+      {/* list */}
       <div className="grid gap-3">
         {weapons.map((w) => {
           const isSelected = selectedWeaponId === w.id;
-
           return (
-            <Card
-              key={w.id}
-              className={`transition-colors ${isSelected ? "ring-2 ring-primary" : ""}`}
-              onClick={() => selectWeapon(w.id)}
-            >
-              {/* Card header: title + delete */}
+            <Card key={w.id} className={`transition-colors ${isSelected ? "ring-2 ring-primary" : ""}`} onClick={() => selectWeapon(w.id)}>
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-base truncate">
-                  {w.name || "Unnamed Rifle"}
-                </CardTitle>
-
+                <CardTitle className="text-base truncate">{w.name || "Unnamed Rifle"}</CardTitle>
                 <div className="flex items-center gap-2">
-                  {/* Keep delete in the header */}
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeWeapon(w.id);
-                    }}
-                    aria-label="Delete rifle"
+                    onClick={(e) => { e.stopPropagation(); addAmmo(w.id); }}
                   >
+                    <Plus className="h-3 w-3 mr-1" /> Add Ammo
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); removeWeapon(w.id); }} aria-label="Delete rifle">
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               </CardHeader>
 
-              {/* Card body */}
-              <CardContent onClick={(e) => e.stopPropagation()} className="space-y-4">
-                {/* Rifle fields */}
+              <CardContent onClick={(e) => e.stopPropagation()}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <Label htmlFor={`rifle-name-${w.id}`} className="text-sm">Rifle Name</Label>
-                    <Input
-                      id={`rifle-name-${w.id}`}
-                      value={w.name}
-                      onChange={(e) => patchWeapon(w.id, { name: e.target.value })}
-                      placeholder="e.g., Remington 700"
-                    />
+                    <Label htmlFor={`name-${w.id}`}>Rifle Name</Label>
+                    <Input id={`name-${w.id}`} value={w.name} onChange={(e) => patchWeapon(w.id, { name: e.target.value })} placeholder="e.g., Remington 700" />
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
-                    <NumberInput
-                      id={`barrel-${w.id}`}
-                      label="Barrel Length (in)"
-                      value={w.barrelLengthIn}
-                      onChange={(v) => patchWeapon(w.id, { barrelLengthIn: v })}
-                      step="0.5"
-                    />
-                    <NumberInput
-                      id={`twist-${w.id}`}
-                      label="Twist Rate (in)"
-                      value={w.twistRateIn}
-                      onChange={(v) => patchWeapon(w.id, { twistRateIn: v })}
-                      step="0.5"
-                    />
+                    <NumberInput id={`barrel-${w.id}`} label="Barrel Length (in)" value={w.barrelLengthIn} onChange={(v) => patchWeapon(w.id, { barrelLengthIn: v })} step="0.5" />
+                    <NumberInput id={`twist-${w.id}`} label="Twist Rate (in)" value={w.twistRateIn} onChange={(v) => patchWeapon(w.id, { twistRateIn: v })} step="0.5" />
                   </div>
 
                   <div>
-                    <Label className="text-sm">Scope Units</Label>
-                    <Select
-                      value={w.scopeUnits}
-                      onValueChange={(val) => patchWeapon(w.id, { scopeUnits: val as Weapon["scopeUnits"] })}
-                    >
-                      <SelectTrigger aria-label="Scope Units">
-                        <SelectValue placeholder="Select units" />
-                      </SelectTrigger>
+                    <Label>Scope Units</Label>
+                    <Select value={w.scopeUnits} onValueChange={(val) => patchWeapon(w.id, { scopeUnits: val as Weapon["scopeUnits"] })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="MIL">MIL</SelectItem>
                         <SelectItem value="MOA">MOA</SelectItem>
@@ -239,87 +169,34 @@ export function EquipmentPage() {
                   </div>
                 </div>
 
-                {/* Ammo list */}
-                <section className="mt-2">
+                {/* Ammo */}
+                <div className="mt-4">
                   <h3 className="font-medium text-sm mb-2">Ammunition</h3>
-
-                  {w.ammo.length === 0 && (
-                    <div className="text-xs text-muted-foreground">
-                      No ammo yet. Click “Add Ammo”.
-                    </div>
-                  )}
-
+                  {w.ammo.length === 0 && <div className="text-xs text-muted-foreground">No ammo yet. Click “Add Ammo”.</div>}
                   <div className="grid gap-2">
                     {w.ammo.map((a) => {
                       const open = selectedAmmoId === a.id;
+                      const z = ensureZeroEnv(a); // <- SAFE DEFAULTS
                       return (
-                        <Card
-                          key={a.id}
-                          className={`border ${open ? "ring-1 ring-primary" : ""}`}
-                          onClick={() => selectAmmo(a.id)}
-                        >
+                        <Card key={a.id} className={`border ${open ? "ring-1 ring-primary" : ""}`} onClick={() => selectAmmo(a.id)}>
                           <CardHeader className="flex flex-row items-center justify-between py-2">
-                            <CardTitle className="text-sm truncate">
-                              {a.name || a.ammoName || "Load"}
-                            </CardTitle>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeAmmo(w.id, a.id);
-                              }}
-                              aria-label="Delete ammo"
-                            >
+                            <CardTitle className="text-sm truncate">{a.name || a.ammoName || "Load"}</CardTitle>
+                            <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); removeAmmo(w.id, a.id); }} aria-label="Delete ammo">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           </CardHeader>
 
                           {open && (
-                            <CardContent
-                              onClick={(e) => e.stopPropagation()}
-                              className="space-y-3"
-                            >
-                              <div>
-                                <Label htmlFor={`ammo-name-${a.id}`} className="text-sm">
-                                  Load Name (optional)
-                                </Label>
-                                <Input
-                                  id={`ammo-name-${a.id}`}
-                                  value={a.name}
-                                  onChange={(e) =>
-                                    patchAmmo(w.id, a.id, { name: e.target.value })
-                                  }
-                                  placeholder="e.g., 140 ELD-M handload"
-                                />
-                              </div>
+                            <CardContent onClick={(e) => e.stopPropagation()} className="space-y-3">
+                              <Input value={a.name} onChange={(e) => patchAmmo(w.id, a.id, { name: e.target.value })} placeholder="Load name (optional)" />
 
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                <NumberInput
-                                  id={`bw-${a.id}`}
-                                  label="Bullet Weight (gr)"
-                                  value={a.bulletWeightGr}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { bulletWeightGr: v })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`mv-${a.id}`}
-                                  label="Muzzle Velocity (m/s)"
-                                  value={a.V0}
-                                  onChange={(v) => patchAmmo(w.id, a.id, { V0: v })}
-                                />
+                                <NumberInput id={`bw-${a.id}`} label="Bullet Weight (gr)" value={a.bulletWeightGr} onChange={(v) => patchAmmo(w.id, a.id, { bulletWeightGr: v })} />
+                                <NumberInput id={`mv-${a.id}`} label="Muzzle Velocity (m/s)" value={a.V0} onChange={(v) => patchAmmo(w.id, a.id, { V0: v })} />
                                 <div>
-                                  <Label className="text-sm">Drag Model</Label>
-                                  <Select
-                                    value={a.model}
-                                    onValueChange={(val) =>
-                                      patchAmmo(w.id, a.id, { model: val as any })
-                                    }
-                                  >
-                                    <SelectTrigger aria-label="Drag Model">
-                                      <SelectValue />
-                                    </SelectTrigger>
+                                  <Label>Drag Model</Label>
+                                  <Select value={a.model} onValueChange={(val) => patchAmmo(w.id, a.id, { model: val as any })}>
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                       <SelectItem value="G1">G1</SelectItem>
                                       <SelectItem value="G7">G7</SelectItem>
@@ -327,72 +204,16 @@ export function EquipmentPage() {
                                     </SelectContent>
                                   </Select>
                                 </div>
-                                <NumberInput
-                                  id={`bc-${a.id}`}
-                                  label={`BC (${a.model})`}
-                                  value={a.bc}
-                                  step="0.001"
-                                  onChange={(v) => patchAmmo(w.id, a.id, { bc: v })}
-                                />
+                                <NumberInput id={`bc-${a.id}`} label={`BC (${a.model})`} value={a.bc} step="0.001" onChange={(v) => patchAmmo(w.id, a.id, { bc: v })} />
                               </div>
 
                               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                <NumberInput
-                                  id={`zero-${a.id}`}
-                                  label="Zero Distance (m)"
-                                  value={a.zeroDistanceM}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { zeroDistanceM: v })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`sh-${a.id}`}
-                                  label="Scope Height (mm)"
-                                  value={a.scopeHeightMm}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, { scopeHeightMm: v })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`zt-${a.id}`}
-                                  label="Zero Temp (°C)"
-                                  value={a.zeroEnv.temperatureC}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, {
-                                      zeroEnv: { ...a.zeroEnv, temperatureC: v },
-                                    })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`zp-${a.id}`}
-                                  label="Zero Pressure (hPa)"
-                                  value={a.zeroEnv.pressurehPa}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, {
-                                      zeroEnv: { ...a.zeroEnv, pressurehPa: v },
-                                    })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`zh-${a.id}`}
-                                  label="Zero Humidity (%)"
-                                  value={a.zeroEnv.humidityPct}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, {
-                                      zeroEnv: { ...a.zeroEnv, humidityPct: v },
-                                    })
-                                  }
-                                />
-                                <NumberInput
-                                  id={`za-${a.id}`}
-                                  label="Zero Altitude (m)"
-                                  value={a.zeroEnv.altitudeM ?? 0}
-                                  onChange={(v) =>
-                                    patchAmmo(w.id, a.id, {
-                                      zeroEnv: { ...a.zeroEnv, altitudeM: v },
-                                    })
-                                  }
-                                />
+                                <NumberInput id={`zero-${a.id}`} label="Zero Distance (m)" value={a.zeroDistanceM} onChange={(v) => patchAmmo(w.id, a.id, { zeroDistanceM: v })} />
+                                <NumberInput id={`sh-${a.id}`} label="Scope Height (mm)" value={a.scopeHeightMm} onChange={(v) => patchAmmo(w.id, a.id, { scopeHeightMm: v })} />
+                                <NumberInput id={`zt-${a.id}`} label="Zero Temp (°C)" value={z.temperatureC} onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...z, temperatureC: v } })} />
+                                <NumberInput id={`zp-${a.id}`} label="Zero Pressure (hPa)" value={z.pressurehPa} onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...z, pressurehPa: v } })} />
+                                <NumberInput id={`zh-${a.id}`} label="Zero Humidity (%)" value={z.humidityPct} onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...z, humidityPct: v } })} />
+                                <NumberInput id={`za-${a.id}`} label="Zero Altitude (m)" value={z.altitudeM ?? 0} onChange={(v) => patchAmmo(w.id, a.id, { zeroEnv: { ...z, altitudeM: v } })} />
                               </div>
                             </CardContent>
                           )}
@@ -400,21 +221,13 @@ export function EquipmentPage() {
                       );
                     })}
                   </div>
-
-                  {/* Bottom-left Add Ammo button */}
+                  {/* bottom-left Add Ammo */}
                   <div className="mt-3">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        addAmmo(w.id);
-                      }}
-                    >
+                    <Button variant="outline" size="sm" onClick={() => addAmmo(w.id)}>
                       <Plus className="h-3 w-3 mr-1" /> Add Ammo
                     </Button>
                   </div>
-                </section>
+                </div>
               </CardContent>
             </Card>
           );
