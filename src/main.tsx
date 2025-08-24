@@ -8,7 +8,7 @@ import { Router } from "./components/Router";
 import { EquipmentPage } from "./pages/EquipmentPage";
 import { CalculatorPage } from "./pages/CalculatorPage";
 import { LogPage } from "./pages/logPage";
-import { DOPEPage } from "./pages/DOPEpage";
+import DOPEPage from "./pages/DOPEpage";
 
 import "./index.css";
 
