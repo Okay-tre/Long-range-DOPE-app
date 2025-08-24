@@ -7,6 +7,7 @@ import { Button } from "../components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { toast } from "sonner@2.0.3";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 
 // keep your existing handlers/types
 import { makeSnapshotFromCalculator, saveEntryHandler, type LogForm, type CalcSnapshot } from "./log.handlers";
@@ -19,6 +20,23 @@ import { calculateAirDensity } from "../utils/ballistics";
 const Label = ({ children }: { children: React.ReactNode }) => (
   <span className="text-sm">{children}</span>
 );
+
+// Quick equipment selectors use global state so the calculator + snapshot stay in sync
+const weaponsList = state.weapons;
+
+const handleSelectWeapon = (weaponId: string) => {
+  const w = weaponsList.find(w => w.id === weaponId);
+  setState({
+    ...state,
+    selectedWeaponId: weaponId,
+    // default to first ammo on weapon (or keep current if it belongs to this weapon)
+    selectedAmmoId: w?.ammo?.length ? (w.ammo.find(a => a.id === state.selectedAmmoId)?.id ?? w.ammo[0].id) : undefined,
+  });
+};
+
+const handleSelectAmmo = (ammoId: string) => {
+  setState({ ...state, selectedAmmoId: ammoId });
+};
 
 function NumberInput({
   label, value, onChange, step = "any", placeholder,
@@ -133,7 +151,64 @@ export function LogPage() {
   // Simple scope reading strings (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
   const [scopeElevation, setScopeElevation] = useState<string>("");
   const [scopeWindage, setScopeWindage] = useState<string>("");
-
+  
+      {/* Equipment Quick Picker */}
+      <section className="p-3 border bg-card">
+        <h3 className="font-bold mb-3">Equipment</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Rifle select */}
+          <div>
+            <Label>Rifle</Label>
+            <Select
+              value={selectedWeapon?.id ?? ""}
+              onValueChange={(val) => handleSelectWeapon(val)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={weaponsList.length ? "Select rifle..." : "No rifles saved"} />
+              </SelectTrigger>
+              <SelectContent>
+                {weaponsList.map(w => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name || "Unnamed Rifle"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+      
+          {/* Ammo select (depends on selected rifle) */}
+          <div>
+            <Label>Ammo / Load</Label>
+            <Select
+              value={selectedAmmo?.id ?? ""}
+              onValueChange={(val) => handleSelectAmmo(val)}
+              disabled={!selectedWeapon || !(selectedWeapon.ammo?.length)}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={!selectedWeapon
+                    ? "Select a rifle first"
+                    : (selectedWeapon.ammo?.length ? "Select ammo..." : "No ammo on this rifle")}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedWeapon?.ammo?.map(a => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name || a.ammoName || "Load"}{/* show friendly name */}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      
+        {/* Optional: button to force-refresh snapshot immediately */}
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={handleUseCurrentSnapshot}>
+            Use This Equipment Now
+          </Button>
+        </div>
+      </section>
   // snapshot we render in the “Calculator Snapshot” card
   const [snapshot, setSnapshot] = useState<CalcSnapshot | null>(null);
 
