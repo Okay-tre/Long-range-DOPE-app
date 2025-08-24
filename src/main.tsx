@@ -1,31 +1,29 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { AppProvider } from "./contexts/AppContext";
+import Navigation from "./components/Navigation";
+import { Router } from "./components/Router";
 
-import { AppProvider } from './contexts/AppContext';
-import { Router } from './components/Router';
-import Navigation from './components/Navigation';
+// PAGES
+import { EquipmentPage } from "./pages/EquipmentPage";
+import { CalculatorPage } from "./pages/CalculatorPage";
+import { LogPage } from "./pages/logPage";
+import { DOPEPage } from "./pages/DOPEpage";
 
-import { EquipmentPage } from './pages/EquipmentPage';
-import { CalculatorPage } from './pages/CalculatorPage';
-import { DOPEPage } from './pages/DOPEpage';
-import { LogPage } from './pages/logPage';
+import "./index.css";
 
-<Router
-  routes={[
-    { path: "/equipment", component: <EquipmentPage /> },
-    { path: "/calc",      component: <CalculatorPage /> },
-    { path: "/log",       component: <LogPage /> },
-    { path: "/dope",      component: <DOPEPage /> },
-  ]}
-  defaultPath="/calc"
-/>
+const ROUTES = [
+  { path: "/equipment", label: "Equipment", component: <EquipmentPage /> },
+  { path: "/calc",      label: "Ballistic Calculator", component: <CalculatorPage /> },
+  { path: "/log",       label: "Log", component: <LogPage /> },
+  { path: "/dope",      label: "DOPE", component: <DOPEPage /> },
+];
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <AppProvider>
-      <Navigation />          {/* ⬅️ mount header/nav here */}
-      <Router routes={routes} defaultPath="/equipment" />
+      <Navigation routes={ROUTES} />
+      <Router routes={ROUTES} defaultPath="/equipment" />
     </AppProvider>
   </React.StrictMode>
 );
