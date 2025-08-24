@@ -6,10 +6,14 @@ const Tab = (href: string, label: string, currentPath: string) => {
     <a
       key={href}
       href={`#${href}`}
+      aria-current={active ? "page" : undefined}
+      // Inline style guarantees the red text even if a global rule tries to override it
+      style={active ? { color: "var(--color-header-background)" } : undefined}
       className={[
         "px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition",
         active
-          ? "bg-white text-[var(--color-header-background)] shadow"
+          // “!” forces Tailwind to output with !important so it beats header’s inherited white
+          ? "bg-white !text-[var(--color-header-background)] shadow"
           : "text-white/90 hover:text-white hover:bg-white/10"
       ].join(" ")}
     >
