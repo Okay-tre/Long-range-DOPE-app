@@ -1,6 +1,10 @@
 // src/components/Navigation.tsx
 import React, { useEffect, useState } from "react";
-import logo from "../assets/logo-bullet.png"; // keep or remove if you don't have it
+<img
+  src={`${import.meta.env.BASE_URL}logo-bullet.png`} // if file is public/logo-bullet.png
+  alt="PCG Ballistics"
+  className="w-8 h-8 object-contain shrink-0"
+/>
 
 const TAB = (href: string, label: string, currentPath: string) => {
   const isActive = currentPath === href;
