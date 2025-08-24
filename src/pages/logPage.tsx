@@ -4,13 +4,30 @@ import { SessionManager } from "../components/SessionManager";
 import { PresetSelectors } from "../components/PresetSelectors";
 import { EquipmentManager } from "../components/EquipmentManager";
 import { Button } from "../components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../components/ui/dialog";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { toast } from "sonner@2.0.3";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 
-// keep your existing handlers/types
-import { makeSnapshotFromCalculator, saveEntryHandler, type LogForm, type CalcSnapshot } from "./log.handlers";
+import {
+  makeSnapshotFromCalculator, // kept for compatibility if you still want it elsewhere
+  saveEntryHandler,
+  type LogForm,
+  type CalcSnapshot,
+} from "./log.handlers";
 
 import type { Weapon, AmmoProfile } from "../lib/appState";
 import { calculateAirDensity } from "../utils/ballistics";
@@ -21,27 +38,21 @@ const Label = ({ children }: { children: React.ReactNode }) => (
   <span className="text-sm">{children}</span>
 );
 
-// Quick equipment selectors use global state so the calculator + snapshot stay in sync
-const weaponsList = state.weapons;
-
-const handleSelectWeapon = (weaponId: string) => {
-  const w = weaponsList.find(w => w.id === weaponId);
-  setState({
-    ...state,
-    selectedWeaponId: weaponId,
-    // default to first ammo on weapon (or keep current if it belongs to this weapon)
-    selectedAmmoId: w?.ammo?.length ? (w.ammo.find(a => a.id === state.selectedAmmoId)?.id ?? w.ammo[0].id) : undefined,
-  });
-};
-
-const handleSelectAmmo = (ammoId: string) => {
-  setState({ ...state, selectedAmmoId: ammoId });
-};
-
 function NumberInput({
-  label, value, onChange, step = "any", placeholder,
-}: { label: string; value: number | null | undefined; onChange: (n: number | null) => void; step?: string; placeholder?: string }) {
-  const displayValue = value !== null && value !== undefined ? value.toString() : "";
+  label,
+  value,
+  onChange,
+  step = "any",
+  placeholder,
+}: {
+  label: string;
+  value: number | null | undefined;
+  onChange: (n: number | null) => void;
+  step?: string;
+  placeholder?: string;
+}) {
+  const displayValue =
+    value !== null && value !== undefined ? value.toString() : "";
   return (
     <label className="flex flex-col gap-1">
       <Label>{label}</Label>
@@ -65,8 +76,16 @@ function NumberInput({
 }
 
 function TextInput({
-  label, value, onChange, placeholder,
-}: { label: string; value: string | undefined; onChange: (s: string) => void; placeholder?: string }) {
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string | undefined;
+  onChange: (s: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="flex flex-col gap-1">
       <Label>{label}</Label>
@@ -82,8 +101,16 @@ function TextInput({
 }
 
 function TextAreaInput({
-  label, value, onChange, placeholder,
-}: { label: string; value: string | undefined; onChange: (s: string) => void; placeholder?: string }) {
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string | undefined;
+  onChange: (s: string) => void;
+  placeholder?: string;
+}) {
   return (
     <label className="flex flex-col gap-1">
       <Label>{label}</Label>
@@ -124,15 +151,15 @@ export function LogPage() {
 
   // ---------------- selection helpers (robust, with fallbacks) ----------------
   const selectedWeapon: Weapon | undefined = useMemo(() => {
-    const byId = state.weapons.find(w => w.id === state.selectedWeaponId);
+    const byId = state.weapons.find((w) => w.id === state.selectedWeaponId);
     if (byId && byId.ammo?.length) return byId;
     // fallback: first weapon with ammo, or first weapon
-    return state.weapons.find(w => w.ammo?.length) ?? state.weapons[0];
+    return state.weapons.find((w) => w.ammo?.length) ?? state.weapons[0];
   }, [state.weapons, state.selectedWeaponId]);
 
   const selectedAmmo: AmmoProfile | undefined = useMemo(() => {
     if (!selectedWeapon) return undefined;
-    const byId = selectedWeapon.ammo.find(a => a.id === state.selectedAmmoId);
+    const byId = selectedWeapon.ammo.find((a) => a.id === state.selectedAmmoId);
     return byId ?? selectedWeapon.ammo[0];
   }, [selectedWeapon, state.selectedAmmoId]);
 
@@ -151,64 +178,7 @@ export function LogPage() {
   // Simple scope reading strings (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
   const [scopeElevation, setScopeElevation] = useState<string>("");
   const [scopeWindage, setScopeWindage] = useState<string>("");
-  
-      {/* Equipment Quick Picker */}
-      <section className="p-3 border bg-card">
-        <h3 className="font-bold mb-3">Equipment</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {/* Rifle select */}
-          <div>
-            <Label>Rifle</Label>
-            <Select
-              value={selectedWeapon?.id ?? ""}
-              onValueChange={(val) => handleSelectWeapon(val)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={weaponsList.length ? "Select rifle..." : "No rifles saved"} />
-              </SelectTrigger>
-              <SelectContent>
-                {weaponsList.map(w => (
-                  <SelectItem key={w.id} value={w.id}>
-                    {w.name || "Unnamed Rifle"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-      
-          {/* Ammo select (depends on selected rifle) */}
-          <div>
-            <Label>Ammo / Load</Label>
-            <Select
-              value={selectedAmmo?.id ?? ""}
-              onValueChange={(val) => handleSelectAmmo(val)}
-              disabled={!selectedWeapon || !(selectedWeapon.ammo?.length)}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={!selectedWeapon
-                    ? "Select a rifle first"
-                    : (selectedWeapon.ammo?.length ? "Select ammo..." : "No ammo on this rifle")}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {selectedWeapon?.ammo?.map(a => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.name || a.ammoName || "Load"}{/* show friendly name */}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-      
-        {/* Optional: button to force-refresh snapshot immediately */}
-        <div className="mt-3">
-          <Button variant="outline" size="sm" onClick={handleUseCurrentSnapshot}>
-            Use This Equipment Now
-          </Button>
-        </div>
-      </section>
+
   // snapshot we render in the “Calculator Snapshot” card
   const [snapshot, setSnapshot] = useState<CalcSnapshot | null>(null);
 
@@ -221,11 +191,33 @@ export function LogPage() {
   const [showPresetManager, setShowPresetManager] = useState(false);
 
   // ---------------- averages for header ----------------
-  const sessionEntries = entries.filter(e => e.sessionId === session?.id);
-  const validGroups = sessionEntries.filter(e => e.groupSizeCm && e.groupSizeCm > 0);
+  const sessionEntries = entries.filter((e) => e.sessionId === session?.id);
+  const validGroups = sessionEntries.filter(
+    (e) => e.groupSizeCm && e.groupSizeCm > 0
+  );
   const avgGroupSize = validGroups.length
-    ? (validGroups.reduce((s, e) => s + (e.groupSizeCm as number), 0) / validGroups.length).toFixed(1)
+    ? (
+        validGroups.reduce((s, e) => s + (e.groupSizeCm as number), 0) /
+        validGroups.length
+      ).toFixed(1)
     : null;
+
+  // ---------------- equipment quick picker handlers ----------------
+  const handleSelectWeapon = (weaponId: string) => {
+    const w = state.weapons.find((x) => x.id === weaponId);
+    setState({
+      ...state,
+      selectedWeaponId: weaponId,
+      selectedAmmoId: w?.ammo?.length
+        ? // keep current ammo if it belongs to this weapon; otherwise first
+          (w.ammo.find((a) => a.id === state.selectedAmmoId)?.id ?? w.ammo[0].id)
+        : undefined,
+    });
+  };
+
+  const handleSelectAmmo = (ammoId: string) => {
+    setState({ ...state, selectedAmmoId: ammoId });
+  };
 
   // ---------------- scope reading parsing ----------------
   const parseScopeReading = (reading: string) => {
@@ -235,7 +227,7 @@ export function LogPage() {
     const dir = m[1].toUpperCase();
     const val = parseFloat(m[2]);
     if (isNaN(val)) return null;
-    return { direction: dir as "U"|"D"|"L"|"R", value: val };
+    return { direction: dir as "U" | "D" | "L" | "R", value: val };
   };
 
   useEffect(() => {
@@ -245,11 +237,19 @@ export function LogPage() {
     if (calculator.scopeUnits === "MIL") {
       const up = elev ? (elev.direction === "U" ? elev.value : -elev.value) : null;
       const right = wind ? (wind.direction === "R" ? wind.value : -wind.value) : null;
-      setLogForm(prev => ({ ...prev, actualAdjMil: { up, right }, actualAdjMoa: { up: null, right: null } }));
+      setLogForm((prev) => ({
+        ...prev,
+        actualAdjMil: { up, right },
+        actualAdjMoa: { up: null, right: null },
+      }));
     } else {
       const up = elev ? (elev.direction === "U" ? elev.value : -elev.value) : null;
       const right = wind ? (wind.direction === "R" ? wind.value : -wind.value) : null;
-      setLogForm(prev => ({ ...prev, actualAdjMoa: { up, right }, actualAdjMil: { up: null, right: null } }));
+      setLogForm((prev) => ({
+        ...prev,
+        actualAdjMoa: { up, right },
+        actualAdjMil: { up: null, right: null },
+      }));
     }
   }, [scopeElevation, scopeWindage, calculator.scopeUnits]);
 
@@ -260,7 +260,7 @@ export function LogPage() {
         id: crypto.randomUUID(),
         startedAt: new Date().toISOString(),
         title: "Default Session",
-        place: ""
+        place: "",
       };
       setState({ ...state, session: s });
     }
@@ -279,9 +279,15 @@ export function LogPage() {
     const scopeHeightMm = a?.scopeHeightMm ?? 35;
     const zeroDistanceM = a?.zeroDistanceM ?? 100;
 
-    // Prefer calculator live env if present; fallback to ammo zero env; else constants
-    const temperature = (state.calculator as any)?.temperatureC ?? a?.zeroEnv?.temperatureC ?? 15;
-    const humidity = (state.calculator as any)?.humidityPct ?? a?.zeroEnv?.humidityPct ?? 50;
+    // Prefer live calculator env if present; fallback to ammo zero env; else constants
+    const temperature =
+      (state.calculator as any)?.temperatureC ??
+      a?.zeroEnv?.temperatureC ??
+      15;
+    const humidity =
+      (state.calculator as any)?.humidityPct ??
+      a?.zeroEnv?.humidityPct ??
+      50;
     const windSpeed = (state.calculator as any)?.windSpeed ?? 0;
     const windDirection = (state.calculator as any)?.windDirection ?? 0;
 
@@ -311,7 +317,7 @@ export function LogPage() {
   const handleUseCurrentSnapshot = () => {
     const snap = buildSnapshotFromSelection();
     setSnapshot(snap);
-    setLogForm(prev => ({
+    setLogForm((prev) => ({
       ...prev,
       rangeM: calculator?.X ?? prev.rangeM ?? snap.zeroDistanceM ?? 100,
     }));
@@ -320,11 +326,13 @@ export function LogPage() {
 
   // auto-load snapshot on first render and whenever selection/equipment changes
   useEffect(() => {
-    const hasSomething = !!selectedWeapon && !!selectedAmmo;
-    if (!hasSomething) return;
-    setSnapshot(buildSnapshotFromSelection());
-    // also default the range to calculator X if present
-    setLogForm(prev => ({ ...prev, rangeM: calculator?.X ?? prev.rangeM ?? (snapshot?.zeroDistanceM ?? 100) }));
+    if (!selectedWeapon || !selectedAmmo) return;
+    const snap = buildSnapshotFromSelection();
+    setSnapshot(snap);
+    setLogForm((prev) => ({
+      ...prev,
+      rangeM: calculator?.X ?? prev.rangeM ?? snap.zeroDistanceM ?? 100,
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.weapons, state.selectedWeaponId, state.selectedAmmoId]);
 
@@ -361,7 +369,7 @@ export function LogPage() {
   };
 
   const updateLogForm = <K extends keyof LogForm>(field: K, value: LogForm[K]) => {
-    setLogForm(prev => ({ ...prev, [field]: value }));
+    setLogForm((prev) => ({ ...prev, [field]: value }));
   };
 
   // ---------------- new session dialog ----------------
@@ -380,14 +388,14 @@ export function LogPage() {
   };
 
   // ---------------- display helpers ----------------
-  const formatCalculatedHold = (value: number, units: 'MIL' | 'MOA') => {
+  const formatCalculatedHold = (value: number, _units: "MIL" | "MOA") => {
     if (Math.abs(value) < 0.05) return "0.0";
-    const dir = value > 0 ? 'U' : 'D';
+    const dir = value > 0 ? "U" : "D";
     return `${dir}${Math.abs(value).toFixed(1)}`;
   };
   const formatCalculatedWindage = (value: number) => {
     if (Math.abs(value) < 0.05) return "0.0";
-    const dir = value > 0 ? 'L' : 'R';
+    const dir = value > 0 ? "L" : "R";
     return `${dir}${Math.abs(value).toFixed(1)}`;
   };
 
@@ -408,9 +416,15 @@ export function LogPage() {
         <h2 className="text-xl font-semibold">Add Group</h2>
         <div className="text-sm text-muted-foreground">
           <div className="flex flex-col items-end gap-1">
-            <div>{session.place ? `${session.title} @ ${session.place}` : session.title}</div>
+            <div>
+              {session.place
+                ? `${session.title} @ ${session.place}`
+                : session.title}
+            </div>
             {avgGroupSize && (
-              <div className="text-xs">Avg Group: {avgGroupSize}cm ({validGroups.length} groups)</div>
+              <div className="text-xs">
+                Avg Group: {avgGroupSize}cm ({validGroups.length} groups)
+              </div>
             )}
           </div>
         </div>
@@ -424,7 +438,11 @@ export function LogPage() {
           </div>
           <Dialog open={showNewSession} onOpenChange={setShowNewSession}>
             <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="text-xs px-2 py-1 ml-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs px-2 py-1 ml-2"
+              >
                 New Session
               </Button>
             </DialogTrigger>
@@ -466,7 +484,7 @@ export function LogPage() {
 
       {/* Quick presets */}
       <div className="p-3 border bg-card">
-        <PresetSelectors onManagePresets={() => setShowPresetManager(s => !s)} />
+        <PresetSelectors onManagePresets={() => setShowPresetManager((s) => !s)} />
       </div>
 
       {/* Equipment manager (collapsible) */}
@@ -477,6 +495,71 @@ export function LogPage() {
           </div>
         </CollapsibleContent>
       </Collapsible>
+
+      {/* Equipment Quick Picker (uses saved equipment) */}
+      <section className="p-3 border bg-card">
+        <h3 className="font-bold mb-3">Equipment</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Rifle select */}
+          <div>
+            <Label>Rifle</Label>
+            <Select
+              value={selectedWeapon?.id ?? ""}
+              onValueChange={(val) => handleSelectWeapon(val)}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={
+                    state.weapons.length ? "Select rifle..." : "No rifles saved"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {state.weapons.map((w) => (
+                  <SelectItem key={w.id} value={w.id}>
+                    {w.name || "Unnamed Rifle"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Ammo select (depends on selected rifle) */}
+          <div>
+            <Label>Ammo / Load</Label>
+            <Select
+              value={selectedAmmo?.id ?? ""}
+              onValueChange={(val) => handleSelectAmmo(val)}
+              disabled={!selectedWeapon || !(selectedWeapon.ammo?.length)}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={
+                    !selectedWeapon
+                      ? "Select a rifle first"
+                      : selectedWeapon.ammo?.length
+                      ? "Select ammo..."
+                      : "No ammo on this rifle"
+                  }
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {selectedWeapon?.ammo?.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {a.name || a.ammoName || "Load"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <Button variant="outline" size="sm" onClick={handleUseCurrentSnapshot}>
+            Use This Equipment Now
+          </Button>
+        </div>
+      </section>
 
       {/* Calculator Snapshot */}
       <section className="p-3 border bg-muted">
@@ -522,7 +605,9 @@ export function LogPage() {
                   <KV
                     k="Elevation"
                     v={formatCalculatedHold(
-                      calculator.scopeUnits === "MIL" ? calculator.lastResult.holdMil : calculator.lastResult.holdMoa,
+                      calculator.scopeUnits === "MIL"
+                        ? calculator.lastResult.holdMil
+                        : calculator.lastResult.holdMoa,
                       calculator.scopeUnits
                     )}
                   />
@@ -543,7 +628,9 @@ export function LogPage() {
             )}
 
             <div className="mb-2 pt-2 border-t">
-              <div className="text-xs font-medium mb-1 text-muted-foreground">Weather Conditions</div>
+              <div className="text-xs font-medium mb-1 text-muted-foreground">
+                Weather Conditions
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                 <KV k="Temperature" v={`${snapshot.temperature}°C`} />
                 <KV k="Humidity" v={`${snapshot.humidity}%`} />
@@ -554,7 +641,10 @@ export function LogPage() {
 
             <div className="pt-2 border-t">
               <div className="grid grid-cols-2 md:grid-cols-2 gap-2 text-sm">
-                <KV k="Barrel" v={`${snapshot.barrelLengthIn}" (${(snapshot.barrelLengthIn * 2.54).toFixed(1)}cm)`} />
+                <KV
+                  k="Barrel"
+                  v={`${snapshot.barrelLengthIn}" (${(snapshot.barrelLengthIn * 2.54).toFixed(1)}cm)`}
+                />
                 <KV k="Twist rate" v={`1:${snapshot.twistRateIn}"`} />
               </div>
             </div>
@@ -569,7 +659,8 @@ export function LogPage() {
           <h3 className="font-bold text-white text-lg">Scope Adjustment Calculator</h3>
         </div>
 
-        {logForm.rangeM > 0 && (logForm.offsetUpCm !== 0 || logForm.offsetRightCm !== 0) ? (
+        {logForm.rangeM > 0 &&
+        (logForm.offsetUpCm !== 0 || logForm.offsetRightCm !== 0) ? (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -581,10 +672,16 @@ export function LogPage() {
                   k="Elevation"
                   v={
                     calculator.scopeUnits === "MIL"
-                      ? `${(-logForm.offsetUpCm * 10) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
+                      ? `${
+                          (-logForm.offsetUpCm * 10) / logForm.rangeM < 0 ? "D" : "U"
+                        }${Math.abs(
                           (-logForm.offsetUpCm * 10) / logForm.rangeM
                         ).toFixed(2)}`
-                      : `${(-logForm.offsetUpCm * 34.38) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
+                      : `${
+                          (-logForm.offsetUpCm * 34.38) / logForm.rangeM < 0
+                            ? "D"
+                            : "U"
+                        }${Math.abs(
                           (-logForm.offsetUpCm * 34.38) / logForm.rangeM
                         ).toFixed(2)}`
                   }
@@ -594,10 +691,16 @@ export function LogPage() {
                   k="Windage"
                   v={
                     calculator.scopeUnits === "MIL"
-                      ? `${(-logForm.offsetRightCm * 10) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
+                      ? `${
+                          (-logForm.offsetRightCm * 10) / logForm.rangeM < 0 ? "L" : "R"
+                        }${Math.abs(
                           (-logForm.offsetRightCm * 10) / logForm.rangeM
                         ).toFixed(2)}`
-                      : `${(-logForm.offsetRightCm * 34.38) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
+                      : `${
+                          (-logForm.offsetRightCm * 34.38) / logForm.rangeM < 0
+                            ? "L"
+                            : "R"
+                        }${Math.abs(
                           (-logForm.offsetRightCm * 34.38) / logForm.rangeM
                         ).toFixed(2)}`
                   }
@@ -608,8 +711,8 @@ export function LogPage() {
               <p className="text-sm text-slate-200 flex items-center gap-2">
                 <span className="text-lg">💡</span>
                 <span>
-                  Adjustments based on group center offset at {logForm.rangeM}m range. Positive values indicate upward/rightward
-                  corrections needed.
+                  Adjustments based on group center offset at {logForm.rangeM}m range.
+                  Positive values indicate upward/rightward corrections needed.
                 </span>
               </p>
             </div>
@@ -617,10 +720,12 @@ export function LogPage() {
         ) : (
           <div className="text-center py-6">
             <p className="text-slate-300 text-sm">
-              Enter range and offset values in the form below to calculate scope adjustments
+              Enter range and offset values in the form below to calculate scope
+              adjustments
             </p>
             <p className="text-slate-400 text-xs mt-2">
-              This calculator will show you the exact {calculator.scopeUnits} adjustments needed for your scope
+              This calculator will show you the exact {calculator.scopeUnits} adjustments
+              needed for your scope
             </p>
           </div>
         )}
@@ -646,14 +751,18 @@ export function LogPage() {
           <NumberInput
             label="Offset up/down (cm)"
             value={logForm.offsetUpCm}
-            onChange={(offsetUpCm) => updateLogForm("offsetUpCm", offsetUpCm || 0)}
+            onChange={(offsetUpCm) =>
+              updateLogForm("offsetUpCm", offsetUpCm || 0)
+            }
             step="0.1"
             placeholder="+ high, - low"
           />
           <NumberInput
             label="Offset left/right (cm)"
             value={logForm.offsetRightCm}
-            onChange={(offsetRightCm) => updateLogForm("offsetRightCm", offsetRightCm || 0)}
+            onChange={(offsetRightCm) =>
+              updateLogForm("offsetRightCm", offsetRightCm || 0)
+            }
             step="0.1"
             placeholder="+ right, - left"
           />
@@ -668,7 +777,9 @@ export function LogPage() {
 
         {/* current scope reading */}
         <div className="mb-3 pt-3 border-t">
-          <h4 className="font-medium mb-2">Current scope reading ({calculator.scopeUnits})</h4>
+          <h4 className="font-medium mb-2">
+            Current scope reading ({calculator.scopeUnits})
+          </h4>
           <div className="grid grid-cols-2 gap-3">
             <TextInput
               label="Elevation"
@@ -684,7 +795,8 @@ export function LogPage() {
             />
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Enter scope adjustments as U/D for elevation and L/R for windage (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
+            Enter scope adjustments as U/D for elevation and L/R for windage
+            (e.g., "U2.5", "D1.2", "L0.8", "R3.1")
           </p>
         </div>
 
