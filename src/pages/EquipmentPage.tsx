@@ -52,7 +52,8 @@ export function EquipmentPage() {
       id: crypto.randomUUID(),
       name: "New Rifle",
       scopeUnits: "MIL",
-      scopeClick: 0.1,              // default per-detent value (MIL)
+      scopeClick: 0.1,          // default per-detent (MIL)
+      scopeHeightMm: 35,        // 🔴 moved to Weapon
       barrelLengthIn: 20,
       twistRateIn: 8,
       ammo: [],
@@ -94,7 +95,7 @@ export function EquipmentPage() {
       model: "G7",
       V0: 800,
       zeroDistanceM: 100,
-      scopeHeightMm: 35,
+      // ⛔️ scopeHeightMm removed from AmmoProfile
       zeroEnv: { temperatureC: 15, pressurehPa: 1013, humidityPct: 50, altitudeM: 0 },
     };
     setState({
@@ -103,7 +104,7 @@ export function EquipmentPage() {
         w.id === weaponId ? { ...w, ammo: [...w.ammo, a] } : w
       ),
       selectedWeaponId: weaponId,
-      selectedAmmoId: a.id, // auto-expand the new ammo
+      selectedAmmoId: a.id,
     });
     toast.success("Ammo added");
   };
@@ -125,8 +126,7 @@ export function EquipmentPage() {
   };
 
   const saveAll = () => {
-    // force a write; persistence handled by AppContext effect
-    setState({ ...state });
+    setState({ ...state }); // AppContext persistence effect handles writing
     toast.success("Equipment saved");
   };
 
@@ -212,21 +212,30 @@ export function EquipmentPage() {
                     />
                   </div>
 
-                  {/* Scope units + click */}
+                  {/* Scope geometry + turret */}
                   <div className="grid grid-cols-2 gap-3">
+                    <NumberInput
+                      id={`sh-${w.id}`}
+                      label="Scope Height (mm)"
+                      value={w.scopeHeightMm ?? 35}
+                      onChange={(v) => patchWeapon(w.id, { scopeHeightMm: v })}
+                      step="1"
+                      help="Center of bore to center of scope"
+                    />
+
                     <div>
                       <Label>Scope Units</Label>
                       <Select
                         value={w.scopeUnits}
                         onValueChange={(val) => {
                           const units = val as Weapon["scopeUnits"];
-                          // if user switches units, auto-swap common click
                           const autoClick = units === "MIL" ? 0.1 : 0.25;
                           patchWeapon(w.id, {
                             scopeUnits: units,
-                            scopeClick: (w.scopeClick ?? autoClick) === (units === "MIL" ? 0.25 : 0.1)
-                              ? autoClick
-                              : (w.scopeClick ?? autoClick),
+                            scopeClick:
+                              (w.scopeClick ?? autoClick) === (units === "MIL" ? 0.25 : 0.1)
+                                ? autoClick
+                                : (w.scopeClick ?? autoClick),
                           });
                         }}
                       >
@@ -243,7 +252,11 @@ export function EquipmentPage() {
                     <NumberInput
                       id={`click-${w.id}`}
                       label={`Scope Click (${w.scopeUnits})`}
-                      value={Number.isFinite(w.scopeClick as number) ? (w.scopeClick as number) : (w.scopeUnits === "MIL" ? 0.1 : 0.25)}
+                      value={
+                        Number.isFinite(w.scopeClick as number)
+                          ? (w.scopeClick as number)
+                          : (w.scopeUnits === "MIL" ? 0.1 : 0.25)
+                      }
                       onChange={(v) => patchWeapon(w.id, { scopeClick: v })}
                       step={w.scopeUnits === "MIL" ? "0.01" : "0.125"}
                       help={clickHelp}
@@ -338,12 +351,7 @@ export function EquipmentPage() {
                                   value={a.zeroDistanceM}
                                   onChange={(v) => patchAmmo(w.id, a.id, { zeroDistanceM: v })}
                                 />
-                                <NumberInput
-                                  id={`sh-${a.id}`}
-                                  label="Scope Height (mm)"
-                                  value={a.scopeHeightMm}
-                                  onChange={(v) => patchAmmo(w.id, a.id, { scopeHeightMm: v })}
-                                />
+                                {/* ⛔️ Removed ammo-level Scope Height */}
                                 <NumberInput
                                   id={`zt-${a.id}`}
                                   label="Zero Temp (°C)"
