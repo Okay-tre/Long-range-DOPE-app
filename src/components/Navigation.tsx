@@ -1,7 +1,6 @@
-// src/components/Navigation.tsx
 import React, { useEffect, useState } from "react";
 
-const TAB = (href: string, label: string, currentPath: string) => {
+const Tab = (href: string, label: string, currentPath: string) => {
   const active = currentPath === href;
   return (
     <a
@@ -10,8 +9,8 @@ const TAB = (href: string, label: string, currentPath: string) => {
       className={[
         "px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition",
         active
-          ? "bg-white text-red-700 shadow"
-          : "text-white/90 hover:text-white hover:bg-red-600/60"
+          ? "bg-white text-[var(--color-header-background)] shadow"
+          : "text-white/90 hover:text-white hover:bg-white/10"
       ].join(" ")}
     >
       {label}
@@ -20,7 +19,9 @@ const TAB = (href: string, label: string, currentPath: string) => {
 };
 
 export default function Navigation() {
-  const [currentPath, setCurrentPath] = useState(() => window.location.hash.slice(1) || "/equipment");
+  const [currentPath, setCurrentPath] = useState(
+    () => window.location.hash.slice(1) || "/equipment"
+  );
 
   useEffect(() => {
     const h = () => setCurrentPath(window.location.hash.slice(1) || "/equipment");
@@ -29,15 +30,19 @@ export default function Navigation() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-50 bg-red-700 text-white border-b border-red-800">
+    <header className="ballistics-header sticky top-0 z-50">
       <div className="mx-auto max-w-7xl px-3 sm:px-4 py-2 flex items-center gap-3">
-        <img src={`${import.meta.env.BASE_URL}logo-bullet.png`} alt="PCG Ballistics" className="w-7 h-7 object-contain shrink-0" />
+        <img
+          src={`${import.meta.env.BASE_URL}logo-bullet.png`}
+          alt="PCG Ballistics"
+          className="w-7 h-7 object-contain shrink-0"
+        />
         <div className="font-semibold tracking-wide">PCG Ballistics</div>
         <nav className="ml-auto flex items-center gap-2">
-          {TAB("/equipment", "Equipment", currentPath)}
-          {TAB("/calc", "Calculator", currentPath)}
-          {TAB("/log", "Log", currentPath)}
-          {TAB("/dope", "DOPE", currentPath)}
+          {Tab("/equipment", "Equipment", currentPath)}
+          {Tab("/calc", "Calculator", currentPath)}
+          {Tab("/log", "Log", currentPath)}
+          {Tab("/dope", "DOPE", currentPath)}
         </nav>
       </div>
     </header>
