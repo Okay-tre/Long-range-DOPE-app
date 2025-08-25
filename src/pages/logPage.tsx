@@ -138,6 +138,10 @@ export function LogPage() {
 
   const [snapshot, setSnapshot] = useState<CalcSnapshot | null>(null);
 
+  // Directional text fields for group placement (U/D and L/R)
+  const [upField, setUpField] = useState<string>("");
+  const [lrField, setLrField] = useState<string>("");
+
   // new session dialog
   const [showNewSession, setShowNewSession] = useState(false);
   const [newSessionTitle, setNewSessionTitle] = useState("");
@@ -271,6 +275,8 @@ export function LogPage() {
       });
       setScopeElevation("");
       setScopeWindage("");
+      setUpField("");
+      setLrField("");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save entry");
     }
@@ -308,16 +314,12 @@ export function LogPage() {
 
   // === Suggested Dial Strings (clicks) for the Scope Adjustment Calculator ===
   const computeDial = (unitsValue: number, axis: "elev" | "wind") => {
-    // Direction labels match your existing sign convention in the UI
     const dirLetter =
       axis === "elev"
         ? unitsValue < 0 ? "D" : "U"
         : unitsValue < 0 ? "L" : "R";
 
-    // Convert to clicks (rounded to whole clicks for simplicity)
     const clicks = Math.round(Math.abs(unitsValue) / Math.max(scopeClick, 1e-9));
-
-    // Human string
     const human =
       axis === "elev"
         ? (dirLetter === "U" ? "UP" : "DOWN")
@@ -344,6 +346,67 @@ export function LogPage() {
 
   const elevDial = computeDial(elevUnits, "elev");
   const windDial = computeDial(windUnits, "wind");
+
+  // ---------- Directional (U/D/L/R) parsing for group placement ----------
+  const parseElevCm = (s: string): number | null => {
+    const t = s.trim().toUpperCase();
+    if (!t) return null;
+    // Accept U/D prefixes or +/- sign or plain number
+    let sign = 1;
+    let rest = t;
+
+    if (t[0] === "U") { sign = +1; rest = t.slice(1); }
+    else if (t[0] === "D") { sign = -1; rest = t.slice(1); }
+    else if (t[0] === "+") { sign = +1; rest = t.slice(1); }
+    else if (t[0] === "-") { sign = -1; rest = t.slice(1); }
+
+    const val = parseFloat(rest);
+    if (!isFinite(val)) return null;
+    return sign * val; // +up, -down (cm)
+  };
+
+  const parseWindCm = (s: string): number | null => {
+    const t = s.trim().toUpperCase();
+    if (!t) return null;
+    let sign = 1;
+    let rest = t;
+
+    if (t[0] === "R") { sign = +1; rest = t.slice(1); }
+    else if (t[0] === "L") { sign = -1; rest = t.slice(1); }
+    else if (t[0] === "+") { sign = +1; rest = t.slice(1); }
+    else if (t[0] === "-") { sign = -1; rest = t.slice(1); }
+
+    const val = parseFloat(rest);
+    if (!isFinite(val)) return null;
+    return sign * val; // +right, -left (cm)
+  };
+
+  // Keep the directional text fields in sync with numeric state on mount/changes
+  useEffect(() => {
+    // Elevation label form: U5 / D3.2
+    const up = logForm.offsetUpCm || 0;
+    setUpField(up === 0 ? "" : `${up > 0 ? "U" : "D"}${Math.abs(up).toString()}`);
+    // Windage label form: R4 / L1.5
+    const lr = logForm.offsetRightCm || 0;
+    setLrField(lr === 0 ? "" : `${lr > 0 ? "R" : "L"}${Math.abs(lr).toString()}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on first mount so we don't fight user typing
+
+  // Update numeric cm offsets when user types in U/D/L/R fields
+  const onChangeUpField = (s: string) => {
+    setUpField(s);
+    const parsed = parseElevCm(s);
+    if (parsed !== null) {
+      updateLogForm("offsetUpCm", parsed);
+    }
+  };
+  const onChangeLrField = (s: string) => {
+    setLrField(s);
+    const parsed = parseWindCm(s);
+    if (parsed !== null) {
+      updateLogForm("offsetRightCm", parsed);
+    }
+  };
 
   if (!session) {
     return (
@@ -562,7 +625,7 @@ export function LogPage() {
               <p className="text-sm text-slate-200 flex items-center gap-2">
                 <span className="text-lg">💡</span>
                 <span>
-                  Adjustments based on group center offset at {logForm.rangeM}m range. Values show {scopeUnits} and the simplified dial in clicks.
+                  Adjustments based on group center offset at {logForm.rangeM}m range. Enter offsets like U5 or L4 to auto-parse.
                 </span>
               </p>
             </div>
@@ -582,8 +645,31 @@ export function LogPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <NumberInput label="Range (m)" value={logForm.rangeM} onChange={(rangeM) => updateLogForm("rangeM", rangeM || 0)} step="1" />
           <NumberInput label="Number of shots" value={logForm.shots} onChange={(shots) => updateLogForm("shots", shots || 5)} step="1" />
-          <NumberInput label="Offset up/down (cm)" value={logForm.offsetUpCm} onChange={(v) => updateLogForm("offsetUpCm", v || 0)} step="0.1" placeholder="+ high, - low" />
-          <NumberInput label="Offset left/right (cm)" value={logForm.offsetRightCm} onChange={(v) => updateLogForm("offsetRightCm", v || 0)} step="0.1" placeholder="+ right, - left" />
+
+          {/* Updated to accept U/D */}
+          <label className="flex flex-col gap-1">
+            <Label>Offset up/down (cm)</Label>
+            <input
+              type="text"
+              className="px-2 py-1 border"
+              value={upField}
+              onChange={(e) => onChangeUpField(e.target.value)}
+              placeholder="e.g., U5.5 or D4 (cm)"
+            />
+          </label>
+
+          {/* Updated to accept L/R */}
+          <label className="flex flex-col gap-1">
+            <Label>Offset left/right (cm)</Label>
+            <input
+              type="text"
+              className="px-2 py-1 border"
+              value={lrField}
+              onChange={(e) => onChangeLrField(e.target.value)}
+              placeholder="e.g., R4 or L2.5 (cm)"
+            />
+          </label>
+
           <NumberInput label="Group size (cm)" value={logForm.groupSizeCm} onChange={(v) => updateLogForm("groupSizeCm", v)} step="0.1" placeholder="Optional" />
         </div>
 
@@ -593,7 +679,9 @@ export function LogPage() {
             <TextInput label="Elevation" value={scopeElevation} onChange={setScopeElevation} placeholder="e.g., U2.5 or D1.2" />
             <TextInput label="Windage" value={scopeWindage} onChange={setScopeWindage} placeholder="e.g., R0.8 or L3.1" />
           </div>
-          <p className="text-xs text-muted-foreground mt-2">Enter scope adjustments as U/D (elevation) and L/R (windage)</p>
+          <p className="text-xs text-muted-foreground mt-2">
+            You can enter offsets with direction letters too: U/D for elevation, L/R for windage (e.g., U5, D3.2, R4, L0.6).
+          </p>
         </div>
 
         <div className="mb-3">
