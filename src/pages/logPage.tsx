@@ -114,6 +114,13 @@ export function LogPage() {
     return byId ?? selectedWeapon.ammo[0];
   }, [selectedWeapon, state.selectedAmmoId]);
 
+  // scope display & click value (defaults if missing)
+  const scopeUnits: "MIL" | "MOA" =
+    (selectedWeapon?.scopeUnits as "MIL" | "MOA") ?? calculator.scopeUnits ?? "MIL";
+  const scopeClick: number =
+    (selectedWeapon as any)?.scopeClick ??
+    (scopeUnits === "MIL" ? 0.1 : 0.25);
+
   // form state
   const [logForm, setLogForm] = useState<LogForm>({
     rangeM: calculator?.X ?? 300,
@@ -299,6 +306,45 @@ export function LogPage() {
     return `${dir}${Math.abs(value).toFixed(1)}`;
   };
 
+  // === Suggested Dial Strings (clicks) for the Scope Adjustment Calculator ===
+  const computeDial = (unitsValue: number, axis: "elev" | "wind") => {
+    // Direction labels match your existing sign convention in the UI
+    const dirLetter =
+      axis === "elev"
+        ? unitsValue < 0 ? "D" : "U"
+        : unitsValue < 0 ? "L" : "R";
+
+    // Convert to clicks (rounded to whole clicks for simplicity)
+    const clicks = Math.round(Math.abs(unitsValue) / Math.max(scopeClick, 1e-9));
+
+    // Human string
+    const human =
+      axis === "elev"
+        ? (dirLetter === "U" ? "UP" : "DOWN")
+        : (dirLetter === "L" ? "LEFT" : "RIGHT");
+
+    return {
+      dirLetter,
+      absUnits: Math.abs(unitsValue),
+      clicks,
+      dialStr: `${human} ${clicks} clicks`,
+    };
+  };
+
+  // Precompute MIL/MOA values from offsets (same math you had before)
+  const elevUnits =
+    scopeUnits === "MIL"
+      ? (-logForm.offsetUpCm * 10) / Math.max(logForm.rangeM || 0, 1)
+      : (-logForm.offsetUpCm * 34.38) / Math.max(logForm.rangeM || 0, 1);
+
+  const windUnits =
+    scopeUnits === "MIL"
+      ? (-logForm.offsetRightCm * 10) / Math.max(logForm.rangeM || 0, 1)
+      : (-logForm.offsetRightCm * 34.38) / Math.max(logForm.rangeM || 0, 1);
+
+  const elevDial = computeDial(elevUnits, "elev");
+  const windDial = computeDial(windUnits, "wind");
+
   if (!session) {
     return (
       <div className="container max-w-3xl mx-auto p-4">
@@ -317,274 +363,4 @@ export function LogPage() {
           <div className="flex flex-col items-end gap-1">
             <div>{session.place ? `${session.title} @ ${session.place}` : session.title}</div>
             {avgGroupSize && <div className="text-xs">Avg Group: {avgGroupSize}cm ({validGroups.length} groups)</div>}
-          </div>
-        </div>
-      </div>
-
-      {/* Session management */}
-      <div className="p-2 border bg-card">
-        <div className="flex items-center justify-between">
-          <div className="flex-1 min-w-0">
-            <SessionManager compact={true} showNewSession={false} />
-          </div>
-          <Dialog open={showNewSession} onOpenChange={setShowNewSession}>
-            <DialogTrigger asChild>
-              <Button variant="outline" size="sm" className="text-xs px-2 py-1 ml-2">New Session</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Session</DialogTitle>
-                <DialogDescription>Name and location (optional).</DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-sm font-medium">Session Name</label>
-                  <input className="w-full px-2 py-1 mt-1 border" value={newSessionTitle}
-                         onChange={(e) => setNewSessionTitle(e.target.value)} placeholder="Enter session name" />
-                </div>
-                <div>
-                  <label className="text-sm font-medium">Location/Place</label>
-                  <input className="w-full px-2 py-1 mt-1 border" value={newSessionPlace}
-                         onChange={(e) => setNewSessionPlace(e.target.value)} placeholder="e.g., Local Range" />
-                </div>
-                <div className="flex gap-2">
-                  <Button onClick={handleCreateNewSession}>Create Session</Button>
-                  <Button variant="outline" onClick={() => setShowNewSession(false)}>Cancel</Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
-
-      {/* Equipment Quick Picker (keep; presets removed) */}
-      <section className="p-3 border bg-card">
-        <h3 className="font-bold mb-3">Equipment</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <Label>Rifle</Label>
-            <Select value={selectedWeapon?.id ?? ""} onValueChange={(val) => handleSelectWeapon(val)}>
-              <SelectTrigger>
-                <SelectValue placeholder={state.weapons.length ? "Select rifle..." : "No rifles saved"} />
-              </SelectTrigger>
-              <SelectContent>
-                {state.weapons.map((w) => (
-                  <SelectItem key={w.id} value={w.id}>{w.name || "Unnamed Rifle"}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <Label>Ammo / Load</Label>
-            <Select
-              value={selectedAmmo?.id ?? ""}
-              onValueChange={(val) => handleSelectAmmo(val)}
-              disabled={!selectedWeapon || !(selectedWeapon.ammo?.length)}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={
-                    !selectedWeapon ? "Select a rifle first" :
-                    (selectedWeapon.ammo?.length ? "Select ammo..." : "No ammo on this rifle")
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {selectedWeapon?.ammo?.map((a) => (
-                  <SelectItem key={a.id} value={a.id}>{a.name || a.ammoName || "Load"}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-
-        <div className="mt-3">
-          <Button variant="outline" size="sm" onClick={handleUseCurrentSnapshot}>
-            Use This Equipment Now
-          </Button>
-        </div>
-      </section>
-
-      {/* Calculator Snapshot */}
-      <section className="p-3 border bg-muted">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="font-bold">Calculator Snapshot</h3>
-          <button
-            onClick={handleUseCurrentSnapshot}
-            className="px-3 py-1 bg-secondary text-secondary-foreground text-sm hover:bg-secondary/80"
-          >
-            Use Current Settings
-          </button>
-        </div>
-
-        {snapshot && (
-          <>
-            {(snapshot.firearmName || snapshot.ammoName) && (
-              <div className="mb-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                  {snapshot.firearmName && <KV k="Firearm" v={snapshot.firearmName} />}
-                  {snapshot.ammoName && <KV k="Ammunition" v={snapshot.ammoName} />}
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm mb-2">
-              <KV k="V₀" v={`${Math.round(snapshot.V0)} m/s`} />
-              <KV k="Model" v={snapshot.model} />
-              <KV k="BC" v={snapshot.bcUsed.toString()} />
-              <KV k="Bullet Weight" v={`${snapshot.bulletWeightGr}gr`} />
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-2 gap-2 text-sm mb-2">
-              <KV k="Air density" v={`${snapshot.rhoUsed.toFixed(3)} kg/m³`} />
-              <KV k="Height over bore" v={`${snapshot.y0Cm}cm`} />
-            </div>
-
-            {calculator.lastResult && (
-              <div className="mb-2 pt-2 border-t">
-                <div className="text-xs font-medium mb-1 text-muted-foreground">Calculated Holds ({calculator.scopeUnits})</div>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <KV
-                    k="Elevation"
-                    v={formatCalculatedHold(
-                      calculator.scopeUnits === "MIL" ? calculator.lastResult.holdMil : calculator.lastResult.holdMoa
-                    )}
-                  />
-                  <KV
-                    k="Windage"
-                    v={
-                      calculator.lastResult.windDrift
-                        ? formatCalculatedWindage(
-                            calculator.scopeUnits === "MIL"
-                              ? (calculator.lastResult.windDrift / calculator.X) * 1000
-                              : (calculator.lastResult.windDrift / calculator.X) * 3438
-                          )
-                        : "0.0"
-                    }
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="mb-2 pt-2 border-t">
-              <div className="text-xs font-medium mb-1 text-muted-foreground">Weather Conditions</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                <KV k="Temperature" v={`${snapshot.temperature}°C`} />
-                <KV k="Humidity" v={`${snapshot.humidity}%`} />
-                <KV k="Wind Speed" v={`${snapshot.windSpeed} m/s`} />
-                <KV k="Wind Direction" v={`${snapshot.windDirection}°`} />
-              </div>
-            </div>
-
-            <div className="pt-2 border-t">
-              <div className="grid grid-cols-2 md:grid-cols-2 gap-2 text-sm">
-                <KV k="Barrel" v={`${snapshot.barrelLengthIn}" (${(snapshot.barrelLengthIn * 2.54).toFixed(1)}cm)`} />
-                <KV k="Twist rate" v={`1:${snapshot.twistRateIn}"`} />
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      {/* Scope Adjustment Calculator (static) */}
-      <section className="p-4 bg-slate-800 text-white border border-slate-600 calculation-results-section">
-        <div className="flex items-center gap-3 mb-3">
-          <span className="text-xl">🎯</span>
-          <h3 className="font-bold text-white text-lg">Scope Adjustment Calculator</h3>
-        </div>
-
-        {logForm.rangeM > 0 && (logForm.offsetUpCm !== 0 || logForm.offsetRightCm !== 0) ? (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <div className="text-sm font-semibold text-white mb-1 uppercase tracking-wide">
-                  {calculator.scopeUnits} Adjustments
-                </div>
-                <KVDark
-                  k="Elevation"
-                  v={
-                    calculator.scopeUnits === "MIL"
-                      ? `${(-logForm.offsetUpCm * 10) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
-                          (-logForm.offsetUpCm * 10) / logForm.rangeM
-                        ).toFixed(2)}`
-                      : `${(-logForm.offsetUpCm * 34.38) / logForm.rangeM < 0 ? "D" : "U"}${Math.abs(
-                          (-logForm.offsetUpCm * 34.38) / logForm.rangeM
-                        ).toFixed(2)}`
-                  }
-                />
-                <KVDark
-                  k="Windage"
-                  v={
-                    calculator.scopeUnits === "MIL"
-                      ? `${(-logForm.offsetRightCm * 10) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
-                          (-logForm.offsetRightCm * 10) / logForm.rangeM
-                        ).toFixed(2)}`
-                      : `${(-logForm.offsetRightCm * 34.38) / logForm.rangeM < 0 ? "L" : "R"}${Math.abs(
-                          (-logForm.offsetRightCm * 34.38) / logForm.rangeM
-                        ).toFixed(2)}`
-                  }
-                />
-              </div>
-            </div>
-            <div className="mt-3 pt-2 px-3 py-2 bg-slate-700/50 border-t border-slate-600">
-              <p className="text-sm text-slate-200 flex items-center gap-2">
-                <span className="text-lg">💡</span>
-                <span>Adjustments based on group center offset at {logForm.rangeM}m range.</span>
-              </p>
-            </div>
-          </>
-        ) : (
-          <div className="text-center py-6">
-            <p className="text-slate-300 text-sm">Enter range and offset values in the form below to calculate scope adjustments</p>
-            <p className="text-slate-400 text-xs mt-2">This calculator will show the exact {calculator.scopeUnits} adjustments</p>
-          </div>
-        )}
-      </section>
-
-      {/* Group form */}
-      <section className="p-3 border bg-card">
-        <h3 className="font-bold mb-3">Group Information</h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-          <NumberInput label="Range (m)" value={logForm.rangeM} onChange={(rangeM) => updateLogForm("rangeM", rangeM || 0)} step="1" />
-          <NumberInput label="Number of shots" value={logForm.shots} onChange={(shots) => updateLogForm("shots", shots || 5)} step="1" />
-          <NumberInput label="Offset up/down (cm)" value={logForm.offsetUpCm} onChange={(v) => updateLogForm("offsetUpCm", v || 0)} step="0.1" placeholder="+ high, - low" />
-          <NumberInput label="Offset left/right (cm)" value={logForm.offsetRightCm} onChange={(v) => updateLogForm("offsetRightCm", v || 0)} step="0.1" placeholder="+ right, - left" />
-          <NumberInput label="Group size (cm)" value={logForm.groupSizeCm} onChange={(v) => updateLogForm("groupSizeCm", v)} step="0.1" placeholder="Optional" />
-        </div>
-
-        <div className="mb-3 pt-3 border-t">
-          <h4 className="font-medium mb-2">Current scope reading ({calculator.scopeUnits})</h4>
-          <div className="grid grid-cols-2 gap-3">
-            <TextInput label="Elevation" value={scopeElevation} onChange={setScopeElevation} placeholder="e.g., U2.5 or D1.2" />
-            <TextInput label="Windage" value={scopeWindage} onChange={setScopeWindage} placeholder="e.g., R0.8 or L3.1" />
-          </div>
-          <p className="text-xs text-muted-foreground mt-2">Enter scope adjustments as U/D (elevation) and L/R (windage)</p>
-        </div>
-
-        <div className="mb-3">
-          <TextAreaInput label="Notes" value={logForm.notes} onChange={(notes) => updateLogForm("notes", notes)} placeholder="Wind conditions, rifle position, etc..." />
-        </div>
-      </section>
-
-      {/* Actions */}
-      <section className="flex gap-3">
-        <button
-          onClick={handleSaveEntry}
-          disabled={!snapshot || logForm.rangeM <= 0}
-          className="px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          Save Entry
-        </button>
-
-        <button onClick={() => navigate("/calc")} className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80">
-          ← Back to Calculator
-        </button>
-
-        <button onClick={() => navigate("/dope")} className="px-6 py-2 bg-secondary text-secondary-foreground hover:bg-secondary/80">
-          View DOPE →
-        </button>
-      </section>
-    </div>
-  );
-}
+          </div
