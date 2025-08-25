@@ -84,7 +84,7 @@ export function CalculatorPage() {
           });
           if (typeof wx.windSpeedMs === "number") setWindSpeed(wx.windSpeedMs);
           toast.success(wx.stationName ? `FMI: ${wx.stationName}` : "FMI weather loaded");
-        } catch (e: any) {
+        } catch {
           toast.error("Couldn’t fetch FMI weather; using manual values");
         }
       },
@@ -132,6 +132,7 @@ export function CalculatorPage() {
       });
     }
 
+    // holds implicitly include Coriolis (no separate columns shown)
     const holdMil = (row.holdMil ?? 0) + cor.elevMil;
     const holdMoa = (row.holdMoa ?? 0) + cor.elevMoa;
 
@@ -139,26 +140,36 @@ export function CalculatorPage() {
     const corDriftM = (cor.windMil / 1000) * rangeM;
     const driftM = (row.driftM ?? 0) + corDriftM;
 
-    // Click equivalents (elevation & wind) in the scope’s unit system
     // Wind mils (incl. Coriolis) = total driftM / rangeM * 1000
     const totalWindMil = (driftM / Math.max(rangeM, 1)) * 1000;
-    const elevInUnits  = scopeUnits === "MIL" ? holdMil : holdMoa;
-    const windInUnits  = scopeUnits === "MIL" ? totalWindMil : totalWindMil * 3.437746; // convert mil→MOA when needed
-    const elevClicks   = Math.round((Math.abs(elevInUnits) / scopeClick) * 10) / 10;
-    const windClicks   = Math.round((Math.abs(windInUnits) / scopeClick) * 10) / 10;
+
+    // holds in selected unit
+    const elevInUnits = scopeUnits === "MIL" ? holdMil : holdMoa;
+    const windInUnits = scopeUnits === "MIL" ? totalWindMil : totalWindMil * 3.437746; // mil→MOA
+
+    // clicks (rounded to 0.1 click for nicer display)
+    const roundClicks = (u: number) =>
+      Math.round((Math.abs(u) / Math.max(scopeClick, 1e-9)) * 10) / 10;
+
+    const elevClicks = roundClicks(elevInUnits);
+    const windClicks = roundClicks(windInUnits);
+
+    // Dial strings
+    const elevDial =
+      (elevInUnits >= 0 ? "UP " : "DOWN ") + `${elevClicks} clicks`;
+    const windDial =
+      (windInUnits >= 0 ? "LEFT " : "RIGHT ") + `${windClicks} clicks`;
 
     return {
       ...row,
       rangeM,
-      corElevMil: cor.elevMil,
-      corWindMil: cor.windMil,
       holdMil,
       holdMoa,
       driftM,
       elevInUnits,
       windInUnits,
-      elevClicks,
-      windClicks,
+      elevDial,
+      windDial,
     };
   });
 
@@ -290,50 +301,40 @@ export function CalculatorPage() {
                   <th className="px-2 py-1">TOF (s)</th>
                   <th className="px-2 py-1">Impact Vel (m/s)</th>
                   <th className="px-2 py-1">Drop (m)</th>
-                  <th className="px-2 py-1">Ballistic Hold (MIL)</th>
-                  <th className="px-2 py-1">Coriolis ΔElev (MIL)</th>
-                  <th className="px-2 py-1">Coriolis ΔWind (MIL)</th>
-                  <th className="px-2 py-1">Combined Elev ({scopeUnits})</th>
-                  <th className="px-2 py-1">Elev Clicks</th>
+                  <th className="px-2 py-1">Elevation Hold ({scopeUnits})</th>
+                  <th className="px-2 py-1">Suggested Elevation Dial</th>
                   <th className="px-2 py-1">Wind Hold ({scopeUnits})</th>
-                  <th className="px-2 py-1">Wind Clicks</th>
+                  <th className="px-2 py-1">Suggested Wind Dial</th>
                   <th className="px-2 py-1">Wind Drift (m)</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r, i) => {
-                  const ballisticHoldMilOnly = (r.holdMil ?? 0) - (r.corElevMil ?? 0);
-                  // windInUnits already includes ballistic + Coriolis
-                  return (
-                    <tr key={i} className="border-t">
-                      <td className="px-2 py-1 text-center">{ranges[i]}</td>
-                      <td className="px-2 py-1 text-center">{(r.tof ?? 0).toFixed(2)}</td>
-                      <td className="px-2 py-1 text-center">{(r.impactVel ?? 0).toFixed(1)}</td>
-                      <td className="px-2 py-1 text-center">{(r.dropM ?? 0).toFixed(2)}</td>
-                      <td className="px-2 py-1 text-center">{ballisticHoldMilOnly.toFixed(2)}</td>
-                      <td className="px-2 py-1 text-center">{(r.corElevMil ?? 0).toFixed(2)}</td>
-                      <td className="px-2 py-1 text-center">{(r.corWindMil ?? 0).toFixed(2)}</td>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-t">
+                    <td className="px-2 py-1 text-center">{ranges[i]}</td>
+                    <td className="px-2 py-1 text-center">{(r.tof ?? 0).toFixed(2)}</td>
+                    <td className="px-2 py-1 text-center">{(r.impactVel ?? 0).toFixed(1)}</td>
+                    <td className="px-2 py-1 text-center">{(r.dropM ?? 0).toFixed(2)}</td>
 
-                      {/* Combined elevation in chosen units + clicks */}
-                      <td className="px-2 py-1 text-center">
-                        {scopeUnits === "MIL" ? (r.elevInUnits ?? 0).toFixed(2) : (r.elevInUnits ?? 0).toFixed(2)}
-                      </td>
-                      <td className="px-2 py-1 text-center">{(r.elevClicks ?? 0).toFixed(1)}</td>
+                    {/* Holds already include Coriolis (if enabled) */}
+                    <td className="px-2 py-1 text-center">
+                      {(scopeUnits === "MIL" ? r.holdMil : r.holdMoa).toFixed(2)}
+                    </td>
+                    <td className="px-2 py-1 text-center">{r.elevDial}</td>
 
-                      {/* Wind hold (in chosen units) + clicks */}
-                      <td className="px-2 py-1 text-center">{(r.windInUnits ?? 0).toFixed(2)}</td>
-                      <td className="px-2 py-1 text-center">{(r.windClicks ?? 0).toFixed(1)}</td>
-                      <td className="px-2 py-1 text-center">{(r.driftM ?? 0).toFixed(2)}</td>
-                    </tr>
-                  );
-                })}
+                    <td className="px-2 py-1 text-center">{(r.windInUnits ?? 0).toFixed(2)}</td>
+                    <td className="px-2 py-1 text-center">{r.windDial}</td>
+
+                    <td className="px-2 py-1 text-center">{(r.driftM ?? 0).toFixed(2)}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
           {useCoriolis && latitude !== null && (
             <p className="text-xs text-muted-foreground mt-2">
-              Coriolis convention: +ΔElev adds to UP; +ΔWind adds to LEFT (dial directions).
+              Holds above already include Coriolis when enabled.
             </p>
           )}
         </CardContent>
