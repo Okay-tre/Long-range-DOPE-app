@@ -1,381 +1,386 @@
 //! ballistics-pointmass
 //!
 //! Point-mass trajectory solver with RK4 integration.
-//! - Uses a generic drag function `fn(mach) -> i(M)` (Sierra-style retardation).
-//! - Scales drag by ballistic coefficient (BC) and air density ratio.
-//! - Computes drop, TOF, velocity, angular holds (MIL/MOA), and simple wind drift.
+//! - Drag comes from a **retardation function** `i(M)` where `M` is Mach.
+//! - Scales by air-density ratio and ballistic coefficient (BC).
+//! - 3D integration (x forward, y up, z right) with crosswind.
+//! - Zero-solve by bisection for a given zero distance & sight height.
+//! - Produces per-range rows: TOF, impact velocity, drop, drift, holds (MIL/MOA).
 //!
-//! NOTE: This crate deliberately avoids tightly coupling to `ballistics-models`.
-//! You can pass G1/G7 (or any) drag via a function pointer/closure.
+//! Maths (Sierra / McCoy style):
+//!   a_drag = -(rho/rho0) * i(M) / BC * v_rel * |v_rel|   (vector opposite air-relative velocity)
 //!
-//! Equations (Sierra form):
-//! a_drag = - (rho / rho0) * i(M) / BC * v * |v|  (vector, opposes velocity)
+//! Conventions:
+//! - Wind angle: degrees where 90° = full value from LEFT→RIGHT (i.e., pushes POI RIGHT).
+//!   0° = tailwind, 180° = headwind, 270° = RIGHT→LEFT.
 //!
-//! References:
-//! - Sierra Exterior Ballistics Tables (retardation i(M))
-//! - McCoy, "Modern Exterior Ballistics"
+//! You can pass any drag function. If you depend on `ballistics-models`,
+//! call this crate with `|m| ballistics_models::g7_retardation(m)` etc.
 
-use std::f64::consts::PI;
+use core::f64::consts::PI;
 
-/// Public input describing ambient environment.
+/// Default sea-level density for scaling (kg/m^3)
+const RHO0: f64 = 1.225;
+/// Gravity (m/s^2)
+const G: f64 = 9.80665;
+/// Specific gas constant for dry air (J/(kg·K))
+const R_DRY: f64 = 287.05;
+/// Specific gas constant for water vapor (J/(kg·K))
+const R_VAP: f64 = 461.495;
+/// Ratio of specific heats (air)
+const GAMMA: f64 = 1.4;
+
+/// Generic drag function type: mach -> i(M) (Sierra retardation)
+pub type DragFn = dyn Fn(f64) -> f64 + Send + Sync;
+
+/// Atmosphere inputs (shooter env)
 #[derive(Clone, Copy, Debug)]
-pub struct Environment {
-    /// Air temperature [°C]
-    pub temperature_c: f64,
-    /// Station pressure [hPa]
-    pub pressure_hpa: f64,
-    /// Relative humidity [%]
-    pub humidity_pct: f64,
-    /// Geometric altitude [m] (used only if you prefer to supply it)
-    pub altitude_m: f64,
+pub struct Atmos {
+    pub temperature_c: f64,   // °C
+    pub pressure_hpa: f64,    // hPa
+    pub humidity_pct: f64,    // 0..100
+    pub altitude_m: f64,      // m (optional; if 0, you’ll still get usable density)
 }
 
-/// Result row for one range step.
+impl Atmos {
+    pub fn air_density(self) -> f64 {
+        // Temp in K
+        let t_k = self.temperature_c + 273.15;
+
+        // Saturation vapor pressure (Magnus-Tetens, hPa)
+        let es = 6.112 * (17.67 * self.temperature_c / (self.temperature_c + 243.5)).exp();
+        let rh = (self.humidity_pct.clamp(0.0, 100.0)) / 100.0;
+        let e = rh * es; // actual vapor pressure, hPa
+
+        // Convert to Pa
+        let p_pa = self.pressure_hpa * 100.0;
+        let e_pa = e * 100.0;
+        let pd_pa = (p_pa - e_pa).max(0.0);
+
+        // Virtual temperature accounting for humidity
+        // 1/rv = (pd/(R_d*T)) + (e/(R_v*T))  => rho = pd/(R_d*T) + e/(R_v*T)
+        let rho = pd_pa / (R_DRY * t_k) + e_pa / (R_VAP * t_k);
+        rho
+    }
+
+    pub fn speed_of_sound(self) -> f64 {
+        let t_k = self.temperature_c + 273.15;
+        (GAMMA * R_DRY * t_k).sqrt()
+    }
+}
+
+/// Inputs for the solver
+#[derive(Clone, Debug)]
+pub struct Inputs<'a> {
+    pub bc: f64,                  // ballistic coefficient (G1 or G7 consistent with your drag fn)
+    pub muzzle_velocity: f64,     // m/s
+    pub sight_height_cm: f64,     // height over bore (cm)
+    pub zero_distance_m: f64,     // zero distance (m)
+    pub env: Atmos,               // atmosphere
+    pub wind_speed: f64,          // m/s
+    pub wind_angle_deg: f64,      // see convention above
+    pub dt: f64,                  // integration time step (s) e.g., 0.001..0.003
+    pub max_range_m: f64,         // stop when x reaches this
+    pub drag_fn: &'a DragFn,      // i(M)
+}
+
+/// A row of output sampled at a requested range
 #[derive(Clone, Copy, Debug)]
-pub struct TrajectoryPoint {
+pub struct Row {
     pub range_m: f64,
-    pub time_s: f64,
-    pub velocity_ms: f64,
+    pub tof: f64,
+    pub impact_velocity: f64,
     pub drop_m: f64,
+    pub drift_m: f64,
     pub hold_mil: f64,
     pub hold_moa: f64,
-    pub wind_drift_m: f64,
 }
 
-/// Bullet & shot setup.
-#[derive(Clone, Copy, Debug)]
-pub struct Bullet {
-    /// Ballistic coefficient referenced to the drag curve you pass (e.g., G7 BC).
-    pub bc: f64,
-    /// Bullet diameter [m] – used only for Mach calc if you provide speed of sound; otherwise optional.
-    pub diameter_m: f64,
-    /// Muzzle velocity [m/s]
-    pub muzzle_velocity_ms: f64,
-    /// Sight/optic height over bore [m]
-    pub sight_height_m: f64,
-    /// Zero distance [m]
-    pub zero_distance_m: f64,
-}
-
-/// Wind model (simple constant crosswind).
-#[derive(Clone, Copy, Debug)]
-pub struct Wind {
-    /// Speed [m/s]
-    pub speed_ms: f64,
-    /// Direction *from* which wind blows, degrees CW from North.
-    /// For drift we only need full-value component ⟂ to bullet flight;
-    /// you can pass already-resolved cross value via `cross_ms` if you prefer.
-    pub direction_from_deg: f64,
-    /// Optional override: crosswind component [m/s] (positive = L->R).
-    pub cross_ms: Option<f64>,
-}
-
-/// How to step/integrate.
-#[derive(Clone, Copy, Debug)]
-pub struct SolverOptions {
-    /// Horizontal step size [m] (range axis). 0.5–2.0 m is typical.
-    pub step_m: f64,
-    /// Maximum range [m] to integrate to.
-    pub max_range_m: f64,
-}
-
-/// Speed of sound from ambient (approx). Returns [m/s].
-fn speed_of_sound_ms(temperature_c: f64) -> f64 {
-    // ISO 6344-ish dry-air approx: a = 331.3 + 0.606*T(C)
-    331.3 + 0.606 * temperature_c
-}
-
-/// Air density [kg/m^3] from T (°C), pressure (hPa), humidity (%).
-/// Simple approximation good for ballistics work.
-fn air_density_kgm3(temp_c: f64, pressure_hpa: f64, rh_pct: f64) -> f64 {
-    let t_k = temp_c + 273.15;
-    let p_pa = pressure_hpa * 100.0;
-
-    // Saturation vapor pressure over water (Tetens) [Pa]
-    let es = 6_107.8 * 10f64.powf((7.5 * temp_c) / (temp_c + 237.3));
-    let e = (rh_pct.clamp(0.0, 100.0) / 100.0) * es;
-
-    // Partial pressures
-    let pd = p_pa - e; // dry air partial pressure
-
-    // Specific gas constants
-    let rd = 287.058; // dry air
-    let rv = 461.495; // water vapor
-
-    (pd / (rd * t_k)) + (e / (rv * t_k))
-}
-
-/// Convert linear offset to angular hold.
-/// MIL = (offset / range) * 1000.
-/// MOA = (offset / range) * 3437.74677 (true MOA).
-fn holds_from_drop(range_m: f64, drop_m: f64) -> (f64, f64) {
-    if range_m <= 0.0 {
-        return (0.0, 0.0);
-    }
-    let mil = (drop_m / range_m) * 1000.0;
-    let moa = (drop_m / range_m) * 3437.746770784939;
-    (mil, moa)
-}
-
-/// Main API.
+/// Top-level API: compute a table at specific ranges (meters).
 ///
-/// `drag_fn`: function/closure giving Sierra-style *retardation* i(M) for a given Mach.
-///            For G1/G7 you’ll pass the appropriate curve interpolator from `ballistics-models`.
-///
-/// Returns a vector of trajectory points at each horizontal step (0..=max_range_m).
-pub fn solve_point_mass(
-    env: Environment,
-    wind: Wind,
-    bullet: Bullet,
-    opts: SolverOptions,
-    mut drag_fn: impl FnMut(f64) -> f64,
-) -> Vec<TrajectoryPoint> {
-    assert!(bullet.bc > 0.0, "BC must be > 0");
-    assert!(opts.step_m > 0.0, "step_m must be > 0");
-    assert!(opts.max_range_m > 0.0, "max_range_m must be > 0");
-
-    // Constants
-    let g = 9.80665_f64;
-    let rho0 = 1.225_f64; // reference density at sea level [kg/m^3]
-    let rho = air_density_kgm3(env.temperature_c, env.pressure_hpa, env.humidity_pct);
-    let sigma = (rho / rho0).clamp(0.4, 1.6); // density ratio (guardrails)
-    let a = speed_of_sound_ms(env.temperature_c);
-
-    // Initial conditions at muzzle. Set bore line as y=0; sight above bore positive.
-    // We'll integrate in x (range) using small steps and RK4 in "time" synthesized from dx/vx.
-    let mut x = 0.0_f64;
-    let mut y = bullet.sight_height_m; // line of sight at y=0; bore is below by sight height.
-    let mut vx = bullet.muzzle_velocity_ms; // assume fired exactly along LOS horizontally (small-angle approx)
-    let mut vy = 0.0_f64;
-    let mut t = 0.0_f64;
-
-    // Wind cross component (L->R positive). We use simple model: drift ≈ cross * TOF.
-    // More sophisticated models use apparent wind and yaw—kept simple here.
-    let cross_ms = wind
-        .cross_ms
-        .unwrap_or_else(|| cross_from_dir(wind.speed_ms, wind.direction_from_deg));
-
-    let mut out = Vec::new();
-    out.push(point_from_state(
-        0.0, t, vx, vy, y, bullet, cross_ms,
-    ));
-
-    let step = opts.step_m;
-    let max_x = opts.max_range_m;
-
-    // Integrate until max range
-    while x < max_x {
-        // compute speed & Mach
-        let v = (vx * vx + vy * vy).sqrt().max(1e-6);
-        let mach = v / a;
-
-        // Retardation i(M)
-        let i_m = drag_fn(mach).max(0.0);
-
-        // Drag acceleration magnitude factor (Sierra): k = sigma * i(M) / BC
-        let k = sigma * i_m / bullet.bc;
-
-        // Acceleration components: a_drag = -k * v * (vx,vy) ; a_gravity = -g in y
-        let ax = -k * v * vx;
-        let ay = -g - k * v * vy;
-
-        // Time step corresponding to dx step: dt = dx / vx (guard for low vx)
-        let dt = (step / vx.max(0.1)).clamp(1e-5, 0.1);
-
-        // RK4 integrate in time
-        let (nx, ny, nvx, nvy) = rk4_step(x, y, vx, vy, dt, |_, _, vx0, vy0| {
-            let v0 = (vx0 * vx0 + vy0 * vy0).sqrt().max(1e-6);
-            let mach0 = v0 / a;
-            let i0 = drag_fn(mach0).max(0.0);
-            let k0 = sigma * i0 / bullet.bc;
-            let ax0 = -k0 * v0 * vx0;
-            let ay0 = -g - k0 * v0 * vy0;
-            (vx0, vy0, ax0, ay0)
-        });
-
-        x = nx;
-        y = ny;
-        vx = nvx;
-        vy = nvy;
-        t += dt;
-
-        if x >= max_x {
-            break;
-        }
-
-        // Save point at each ~step in range (use x for range)
-        if (out.last().map(|p| p.range_m).unwrap_or(0.0) + step) <= x + 1e-9 {
-            out.push(point_from_state(x, t, vx, vy, y, bullet, cross_ms));
-        }
-
-        // Stop if the projectile is "crashing" (very low speed)
-        if (vx * vx + vy * vy).sqrt() < 50.0 {
-            out.push(point_from_state(x, t, vx, vy, y, bullet, cross_ms));
-            break;
-        }
+/// Ranges must be strictly increasing and > 0. The solver zeros the rifle for
+/// the provided `zero_distance_m` & `sight_height_cm`, then integrates once and
+/// interpolates to each requested range.
+pub fn solve_table_at_ranges(inputs: &Inputs, ranges_m: &[f64]) -> Vec<Row> {
+    assert!(inputs.bc > 0.0);
+    assert!(inputs.dt > 0.0);
+    if ranges_m.is_empty() {
+        return Vec::new();
     }
 
-    // Convert physical drop to “relative to LOS @ zero” by subtracting LOS offset so that
-    // drop = 0 near the zero distance (simple linear LOS). For now we use a conventional
-    // approach: shift vertical so that point at `zero_distance_m` has zero drop.
-    if bullet.zero_distance_m > 0.0 {
-        // Find nearest point to zero distance
-        let mut idx = 0usize;
-        let mut best_dx = f64::INFINITY;
-        for (i, p) in out.iter().enumerate() {
-            let d = (p.range_m - bullet.zero_distance_m).abs();
-            if d < best_dx {
-                best_dx = d;
-                idx = i;
-            }
+    // 1) Solve firing angle (theta) such that y(range_zero)=0 (sight height accounted).
+    let theta = solve_zero_theta(inputs);
+
+    // 2) Integrate trajectory out to the maximum requested range (or inputs.max_range_m).
+    let target_max = ranges_m.iter().cloned().fold(0.0, f64::max).min(inputs.max_range_m);
+    let traj = integrate_path(inputs, theta, target_max);
+
+    // 3) For each requested range, pick or interpolate state & produce a Row.
+    let mut out = Vec::with_capacity(ranges_m.len());
+    for &r in ranges_m {
+        if r <= 0.0 { continue; }
+        if let Some(s) = sample_at_range(&traj, r) {
+            // Drop is -y at that range (because y=0 is line of sight at zero distance)
+            let drop_m = -s.y;
+            let drift_m = s.z;
+
+            let hold_mil = (drop_m / r) * 1000.0;
+            let hold_moa = hold_mil * 3.437746770784939; // 1 mil = 3.437746... MOA
+
+            out.push(Row {
+                range_m: r,
+                tof: s.t,
+                impact_velocity: s.speed,
+                drop_m,
+                drift_m,
+                hold_mil,
+                hold_moa,
+            });
         }
-        if idx < out.len() {
-            let y_at_zero = out[idx].drop_m; // current "drop" field is still raw y; we will repurpose next
-            // Recompute with zero shift
-            for p in &mut out {
-                // drop is LOS offset; here we want (y - y_at_zero)
-                let new_drop = p.drop_m - y_at_zero;
-                let (mil, moa) = holds_from_drop(p.range_m, -new_drop);
-                *p = TrajectoryPoint {
-                    drop_m: new_drop,
-                    hold_mil: mil,
-                    hold_moa: moa,
-                    ..*p
-                };
-            }
+    }
+    out
+}
+
+/* ------------------------------- internals ------------------------------- */
+
+#[derive(Clone, Copy, Debug)]
+struct State {
+    t: f64,          // time (s)
+    x: f64, y: f64, z: f64,     // position (m)
+    vx: f64, vy: f64, vz: f64,  // velocity (m/s)
+    speed: f64,                 // |v| (m/s)
+}
+
+// Solve for theta (rad) that yields y=0 at zero distance (line-of-sight), given sight height.
+fn solve_zero_theta(inputs: &Inputs) -> f64 {
+    // Small-angle search bounds (in radians). Typical zero angles are small.
+    let mut lo = -5.0_f64.to_radians();
+    let mut hi =  5.0_f64.to_radians();
+
+    let mut f_lo = y_at_zero_range(inputs, lo);
+    let mut f_hi = y_at_zero_range(inputs, hi);
+
+    // If both have the same sign, widen bounds quickly (rare).
+    let mut tries = 0;
+    while f_lo.signum() == f_hi.signum() && tries < 10 {
+        lo *= 2.0;
+        hi *= 2.0;
+        f_lo = y_at_zero_range(inputs, lo);
+        f_hi = y_at_zero_range(inputs, hi);
+        tries += 1;
+    }
+
+    // Bisection
+    for _ in 0..40 {
+        let mid = 0.5 * (lo + hi);
+        let f_mid = y_at_zero_range(inputs, mid);
+        if f_mid.abs() < 1e-5 { return mid; }
+        if f_mid.signum() == f_lo.signum() {
+            lo = mid; f_lo = f_mid;
+        } else {
+            hi = mid; f_hi = f_mid;
         }
+    }
+    0.5 * (lo + hi)
+}
+
+// Return y(range_zero) for a given theta (shoot angle), with line of sight as y=0.
+fn y_at_zero_range(inputs: &Inputs, theta: f64) -> f64 {
+    let zero = inputs.zero_distance_m;
+    let traj = integrate_path(inputs, theta, zero);
+    if let Some(s) = sample_at_range(&traj, zero) {
+        // bullet y is measured from bore; the line of sight is above bore by sight_height
+        // We want y_line_of_sight(zero)=0 => bullet y(zero) - sight_height = 0
+        // Internally we start at y = sight_height (so that y=0 is LoS). See init below.
+        s.y
     } else {
-        // Convert raw y->drop holds even without zero shift
-        for p in &mut out {
-            let (mil, moa) = holds_from_drop(p.range_m, -p.drop_m);
-            *p = TrajectoryPoint { hold_mil: mil, hold_moa: moa, ..*p };
-        }
+        // If we didn't get there, return something large-ish to keep the search going
+        1.0
+    }
+}
+
+fn integrate_path(inputs: &Inputs, theta: f64, max_range: f64) -> Vec<State> {
+    let dt = inputs.dt;
+    let rho = inputs.env.air_density();
+    let rho_ratio = (rho / RHO0).max(0.01);
+    let a_sound = inputs.env.speed_of_sound();
+
+    // Wind components (m/s) with our convention: angle=90 => L→R pushes POI to +z (right)
+    let wa = inputs.wind_angle_deg.to_radians();
+    let wx =  inputs.wind_speed * wa.cos(); // tailwind positive
+    let wz =  inputs.wind_speed * wa.sin(); // +z means pushing to the right
+
+    // Initial state: place the *line of sight* on y=0, so start bullet at y = sight height.
+    let mut s = State {
+        t: 0.0,
+        x: 0.0,
+        y: inputs.sight_height_cm / 100.0, // meters
+        z: 0.0,
+        vx: inputs.muzzle_velocity * theta.cos(),
+        vy: inputs.muzzle_velocity * theta.sin(),
+        vz: 0.0,
+        speed: inputs.muzzle_velocity,
+    };
+
+    let mut out = Vec::with_capacity((max_range / (inputs.muzzle_velocity * dt)).ceil() as usize + 8);
+    out.push(s);
+
+    // Basic RK4 integrator
+    while s.x <= max_range && s.speed > 50.0 && s.t < 20.0 {
+        // A function giving derivatives (dx/dt, dv/dt)
+        let deriv = |st: &State| -> (f64, f64, f64, f64, f64, f64) {
+            // Air-relative velocity
+            let vrx = st.vx - wx;
+            let vry = st.vy;
+            let vrz = st.vz - wz;
+            let vr = (vrx*vrx + vry*vry + vrz*vrz).sqrt().max(1e-6);
+            let mach = vr / a_sound;
+            let i_m = (inputs.drag_fn)(mach);
+
+            // Drag factor
+            let k = rho_ratio * i_m / inputs.bc;
+
+            // Accelerations
+            let ax = -k * vrx * vr;
+            let ay = -G - k * vry * vr;
+            let az = -k * vrz * vr;
+
+            (st.vx, st.vy, st.vz, ax, ay, az)
+        };
+
+        // RK4
+        let (k1x, k1y, k1z, k1vx, k1vy, k1vz) = deriv(&s);
+        let s2 = State {
+            t: s.t + 0.5*dt,
+            x: s.x + 0.5*dt*k1x,
+            y: s.y + 0.5*dt*k1y,
+            z: s.z + 0.5*dt*k1z,
+            vx: s.vx + 0.5*dt*k1vx,
+            vy: s.vy + 0.5*dt*k1vy,
+            vz: s.vz + 0.5*dt*k1vz,
+            speed: 0.0,
+        };
+        let (k2x, k2y, k2z, k2vx, k2vy, k2vz) = deriv(&s2);
+
+        let s3 = State {
+            t: s.t + 0.5*dt,
+            x: s.x + 0.5*dt*k2x,
+            y: s.y + 0.5*dt*k2y,
+            z: s.z + 0.5*dt*k2z,
+            vx: s.vx + 0.5*dt*k2vx,
+            vy: s.vy + 0.5*dt*k2vy,
+            vz: s.vz + 0.5*dt*k2vz,
+            speed: 0.0,
+        };
+        let (k3x, k3y, k3z, k3vx, k3vy, k3vz) = deriv(&s3);
+
+        let s4 = State {
+            t: s.t + dt,
+            x: s.x + dt*k3x,
+            y: s.y + dt*k3y,
+            z: s.z + dt*k3z,
+            vx: s.vx + dt*k3vx,
+            vy: s.vy + dt*k3vy,
+            vz: s.vz + dt*k3vz,
+            speed: 0.0,
+        };
+        let (k4x, k4y, k4z, k4vx, k4vy, k4vz) = deriv(&s4);
+
+        s.x  += dt/6.0 * (k1x + 2.0*k2x + 2.0*k3x + k4x);
+        s.y  += dt/6.0 * (k1y + 2.0*k2y + 2.0*k3y + k4y);
+        s.z  += dt/6.0 * (k1z + 2.0*k2z + 2.0*k3z + k4z);
+        s.vx += dt/6.0 * (k1vx + 2.0*k2vx + 2.0*k3vx + k4vx);
+        s.vy += dt/6.0 * (k1vy + 2.0*k2vy + 2.0*k3vy + k4vy);
+        s.vz += dt/6.0 * (k1vz + 2.0*k2vz + 2.0*k3vz + k4vz);
+        s.t  += dt;
+        s.speed = (s.vx*s.vx + s.vy*s.vy + s.vz*s.vz).sqrt();
+
+        out.push(s);
+
+        // Stop once we pass 2× max_range below the line of sight, as a safety
+        if s.y < -50.0 { break; }
     }
 
     out
 }
 
-/// Single RK4 step helper.
-/// The derivative function returns (dx/dt, dy/dt, dvx/dt, dvy/dt).
-fn rk4_step<F>(
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    dt: f64,
-    mut deriv: F,
-) -> (f64, f64, f64, f64)
-where
-    F: FnMut(f64, f64, f64, f64) -> (f64, f64, f64, f64),
-{
-    let (k1x, k1y, k1vx, k1vy) = deriv(x, y, vx, vy);
+// Linear interpolation helper: find state at exact range r by segment interpolation.
+fn sample_at_range(traj: &[State], r: f64) -> Option<State> {
+    if traj.is_empty() || r < traj[0].x { return None; }
+    // Find first with x >= r
+    let idx = match traj.binary_search_by(|s| s.x.partial_cmp(&r).unwrap()) {
+        Ok(i) => i,
+        Err(i) => i,
+    };
+    if idx == 0 { return Some(traj[0]); }
+    if idx >= traj.len() { return Some(*traj.last().unwrap()); }
+    let a = traj[idx - 1];
+    let b = traj[idx];
+    let dx = (b.x - a.x).max(1e-9);
+    let u = (r - a.x) / dx;
 
-    let (k2x, k2y, k2vx, k2vy) = deriv(
-        x + 0.5 * dt * k1x,
-        y + 0.5 * dt * k1y,
-        vx + 0.5 * dt * k1vx,
-        vy + 0.5 * dt * k1vy,
-    );
-
-    let (k3x, k3y, k3vx, k3vy) = deriv(
-        x + 0.5 * dt * k2x,
-        y + 0.5 * dt * k2y,
-        vx + 0.5 * dt * k2vx,
-        vy + 0.5 * dt * k2vy,
-    );
-
-    let (k4x, k4y, k4vx, k4vy) =
-        deriv(x + dt * k3x, y + dt * k3y, vx + dt * k3vx, vy + dt * k3vy);
-
-    let nx = x + (dt / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
-    let ny = y + (dt / 6.0) * (k1y + 2.0 * k2y + 2.0 * k3y + k4y);
-    let nvx = vx + (dt / 6.0) * (k1vx + 2.0 * k2vx + 2.0 * k3vx + k4vx);
-    let nvy = vy + (dt / 6.0) * (k1vy + 2.0 * k2vy + 2.0 * k3vy + k4vy);
-
-    (nx, ny, nvx, nvy)
+    Some(State {
+        t: a.t + u*(b.t - a.t),
+        x: r,
+        y: a.y + u*(b.y - a.y),
+        z: a.z + u*(b.z - a.z),
+        vx: a.vx + u*(b.vx - a.vx),
+        vy: a.vy + u*(b.vy - a.vy),
+        vz: a.vz + u*(b.vz - a.vz),
+        speed: a.speed + u*(b.speed - a.speed),
+    })
 }
 
-/// Produce a `TrajectoryPoint` snapshot from the current state.
-fn point_from_state(
-    x: f64,
-    t: f64,
-    vx: f64,
-    vy: f64,
-    y: f64,
-    bullet: Bullet,
-    cross_ms: f64,
-) -> TrajectoryPoint {
-    let v = (vx * vx + vy * vy).sqrt();
-    // Simple drift ≈ crosswind * TOF (full-value). Sign: positive drift to the right.
-    let drift = cross_ms * t;
+/* --------------------------- optional conveniences --------------------------- */
 
-    // Temporarily set holds from raw drop (we may re-zero later).
-    let (mil, moa) = holds_from_drop(x, -y);
-
-    TrajectoryPoint {
-        range_m: x,
-        time_s: t,
-        velocity_ms: v,
-        drop_m: y,
-        hold_mil: mil,
-        hold_moa: moa,
-        wind_drift_m: drift,
-    }
+/// Convenience wrapper if you export a G1 retardation function in `ballistics-models`.
+#[cfg(feature = "with-models")]
+pub fn solve_table_g1(inputs: &Inputs, ranges_m: &[f64]) -> Vec<Row> {
+    solve_table_at_ranges(inputs, ranges_m)
 }
 
-/// Resolve crosswind (positive rightward) from a meteorological "from" direction.
-/// For simplicity we assume firing along +X and North = +Y; East = +X.
-/// Wind blowing from `dir` means flow vector points to `dir + 180`.
-fn cross_from_dir(speed_ms: f64, from_deg: f64) -> f64 {
-    let dir_to_deg = (from_deg + 180.0) % 360.0;
-    let rad = dir_to_deg.to_radians();
-    let vx = speed_ms * rad.cos(); // along +X (downrange)
-    let vy = speed_ms * rad.sin(); // +Y (left)
-    // Cross component is vy (left positive). We define L->R positive, so negate:
-    -vy
+/// Convenience wrapper if you export a G7 retardation function in `ballistics-models`.
+#[cfg(feature = "with-models")]
+pub fn solve_table_g7(inputs: &Inputs, ranges_m: &[f64]) -> Vec<Row> {
+    solve_table_at_ranges(inputs, ranges_m)
 }
+
+/* ----------------------------------- tests ---------------------------------- */
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // Toy G7-ish flat curve just to prove compilation and behavior.
-    fn fake_g7_i(mach: f64) -> f64 {
-        // Not real data: monotonic shape that increases with Mach
-        let m = mach.max(0.05);
-        0.5 + 0.4 * (m - 1.0).abs()
-    }
+    // Simple toy drag: i(M) = 0.5 for all M (NOT real ballistics).
+    fn flat_drag(_: f64) -> f64 { 0.5 }
 
     #[test]
-    fn basic_run() {
-        let env = Environment {
-            temperature_c: 15.0,
-            pressure_hpa: 1013.0,
-            humidity_pct: 50.0,
-            altitude_m: 0.0,
-        };
-
-        let bullet = Bullet {
+    fn runs_and_monotonic_x() {
+        let env = Atmos { temperature_c: 15.0, pressure_hpa: 1013.0, humidity_pct: 50.0, altitude_m: 0.0 };
+        let inputs = Inputs {
             bc: 0.25,
-            diameter_m: 0.00782, // 0.308"
-            muzzle_velocity_ms: 800.0,
-            sight_height_m: 0.035,
+            muzzle_velocity: 800.0,
+            sight_height_cm: 3.5,
             zero_distance_m: 100.0,
+            env,
+            wind_speed: 4.0,
+            wind_angle_deg: 90.0,
+            dt: 0.002,
+            max_range_m: 1200.0,
+            drag_fn: &flat_drag,
         };
 
-        let wind = Wind {
-            speed_ms: 0.0,
-            direction_from_deg: 0.0,
-            cross_ms: None,
-        };
-
-        let opts = SolverOptions {
-            step_m: 1.0,
-            max_range_m: 600.0,
-        };
-
-        let traj = solve_point_mass(env, wind, bullet, opts, fake_g7_i);
-        assert!(!traj.is_empty());
-        assert!(traj.last().unwrap().range_m >= 500.0);
+        let rows = solve_table_at_ranges(&inputs, &[100.0, 300.0, 600.0]);
+        assert_eq!(rows.len(), 3);
+        assert!(rows[0].range_m < rows[1].range_m && rows[1].range_m < rows[2].range_m);
+        // Should produce finite numbers
+        for r in rows {
+            assert!(r.tof.is_finite());
+            assert!(r.impact_velocity.is_finite());
+            assert!(r.drop_m.is_finite());
+            assert!(r.drift_m.is_finite());
+            assert!(r.hold_mil.is_finite());
+            assert!(r.hold_moa.is_finite());
+        }
     }
 }
