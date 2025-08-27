@@ -7,27 +7,17 @@ description = "WASM bindings for the ballistics solver"
 license = "MIT"
 
 [lib]
-# cdylib needed for wasm
-crate-type = ["cdylib"]
+# cdylib for the wasm artifact; rlib is handy for unit tests
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# WASM & better panic messages in browser console
 wasm-bindgen = "0.2"
-console_error_panic_hook = "0.1"
-
-# JSON + (de)serialize to/from JsValue ergonomically
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_wasm_bindgen = "0.6"
+serde-wasm-bindgen = "0.5"
+console_error_panic_hook = "0.1"
 
-# our internal crates
-ballistics-core = { path = "../ballistics-core" }
-ballistics-pointmass = { path = "../ballistics-pointmass" }
-ballistics-models = { path = "../ballistics-models" }
-ballistics-6dof = { path = "../ballistics-6dof" }
-
-# tiny helper for float → string; harmless to keep
-ryu = "1"
-
-[features]
-default = []
+ballistics-core       = { path = "../ballistics-core" }
+ballistics-pointmass  = { path = "../ballistics-pointmass" }
+ballistics-models     = { path = "../ballistics-models" }
+ballistics-6dof       = { path = "../ballistics-6dof" }
