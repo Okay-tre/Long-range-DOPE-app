@@ -17,13 +17,12 @@ crate-type = ["rlib"]
 ballistics-core   = { path = "../ballistics-core" }
 ballistics-models = { path = "../ballistics-models" }
 
-# Useful, lightweight deps (keep if you'll serialize results or do tiny vectors)
-serde = { version = "1", features = ["derive"], optional = true }
+# serde always enabled (no feature gate)
+serde = { version = "1", features = ["derive"] }
+
+# Optional tiny vector math; enable with `--features vecmath`
 glam  = { version = "0.27", default-features = false, features = ["std"], optional = true }
 
 [features]
 default = []
-# Enable if you want JSON (de)serialization of inputs/outputs
-serde = ["dep:serde", "ballistics-core/serde", "ballistics-models/serde"]
-# Enable tiny vector math helpers if you prefer (optional)
 vecmath = ["dep:glam"]
