@@ -1,0 +1,42 @@
+name: Rust + WASM CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ballistics-workspace
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install stable Rust with the wasm32 target
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      # Cache cargo
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ballistics-workspace -> target
+
+      - name: Run tests (workspace)
+        run: cargo test --workspace --all-features --quiet
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build wasm bindings
+        working-directory: ballistics-workspace/crates/ballistics-ffi-wasm
+        run: wasm-pack build --target web --release
+
+      - name: Upload wasm pkg (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: ballistics-workspace/crates/ballistics-ffi-wasm/pkg
