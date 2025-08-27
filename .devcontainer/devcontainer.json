@@ -1,0 +1,17 @@
+{
+  "name": "Ballistics Dev",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20" }
+  },
+  "postCreateCommand": "rustup target add wasm32-unknown-unknown && cargo install wasm-pack",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "ms-vscode.vscode-typescript-next"
+      ]
+    }
+  }
+}
