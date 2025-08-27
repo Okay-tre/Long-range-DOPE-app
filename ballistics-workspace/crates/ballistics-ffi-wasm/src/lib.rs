@@ -1,30 +1,27 @@
 // crates/ballistics-ffi-wasm/src/lib.rs
 //
 // WASM bindings: point-mass + 6DoF exports.
-//
-// Notes:
-// - Returns JSON via serde_wasm_bindgen for ergonomics on the JS side.
-// - Keeps the interface minimal and stable.
-// - You can import in TS via `await initWasm()` and call the exported fns.
 
 use wasm_bindgen::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen as swb;
 
-use ballistics_core::{Atmosphere, Environment, Gravity, Vec3};
-use ballistics_pointmass::{solve_point_mass, PointMassInput, PointMassResult};
+// --- our crates ---
+use ballistics_models::{g1_retardation, g7_retardation};
+use ballistics_pointmass as pm;
 use ballistics_6dof::{
     integrate_6dof, initial_state_from_muzzle, projectile_cylindrical, DefaultAeroApprox,
-    IntegrateOpts, State as SixState, Sample as SixSample,
+    IntegrateOpts,
 };
+use ballistics_core::{Atmosphere, Environment, Gravity, Vec3};
 
-// Optional: better panic messages in console
+// Better panic messages in browser console
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
     console_error_panic_hook::set_once();
 }
 
-// ---------- Shared core DTOs ----------
+/* --------------------------- Shared DTOs (JS) --------------------------- */
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct JsEnvironment {
@@ -33,7 +30,6 @@ pub struct JsEnvironment {
     pub humidity_pct: f64,
     pub altitude_m: f64,
 }
-
 impl From<JsEnvironment> for Environment {
     fn from(e: JsEnvironment) -> Self {
         Environment {
@@ -45,7 +41,7 @@ impl From<JsEnvironment> for Environment {
     }
 }
 
-// ---------- Point-mass wrapper (kept from earlier) ----------
+/* ----------------------------- Point-mass ------------------------------ */
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsPointMassInput {
@@ -56,7 +52,7 @@ pub struct JsPointMassInput {
     pub ranges_m: Vec<f64>,
     pub wind_speed_ms: f64,
     pub wind_angle_deg: f64,
-    // Drag function selector (e.g., "G1" or "G7"); you can map to models in JS if needed.
+    /// "G1" | "G7" (defaults to G7 if unknown)
     pub drag_model: String,
 }
 
@@ -76,51 +72,76 @@ pub struct JsPointMassResult {
     pub rows: Vec<JsPointMassRow>,
 }
 
+fn select_drag(model: &str) -> &'static pm::DragFn {
+    match model.to_uppercase().as_str() {
+        "G1" => &g1_retardation,
+        "G7" => &g7_retardation,
+        _ => &g7_retardation,
+    }
+}
+
 #[wasm_bindgen]
 pub fn solve_point_mass_js(input: JsValue) -> Result<JsValue, JsValue> {
     let inp: JsPointMassInput = swb::from_value(input)?;
-    let atmos = Atmosphere::standard();
-    let env: Environment = inp.env.into();
 
-    // Map string model name to a closure for drag. For now use models in JS or a simple mapping.
-    let drag = ballistics_models::g_functions::g_drag_fn(&inp.drag_model)
-        .map_err(|e| JsValue::from_str(&format!("drag model error: {}", e)))?;
+    if inp.ranges_m.is_empty() {
+        return Err(JsValue::from_str("ranges_m must not be empty"));
+    }
 
-    let pm = PointMassInput {
-        env,
-        bc: inp.bc,
-        muzzle_velocity_ms: inp.muzzle_velocity_ms,
-        zero_m: inp.zero_m,
-        ranges_m: inp.ranges_m.clone(),
-        wind_speed_ms: inp.wind_speed_ms,
-        wind_angle_deg: inp.wind_angle_deg,
-        drag_fn: drag,
-        atmos,
+    // point-mass Atmos is defined inside the pm crate
+    let env_pm = pm::Atmos {
+        temperature_c: inp.env.temperature_c,
+        pressure_hpa:  inp.env.pressure_hpa,
+        humidity_pct:  inp.env.humidity_pct,
+        altitude_m:    inp.env.altitude_m,
     };
 
-    let res: PointMassResult = solve_point_mass(pm);
+    let ranges = inp.ranges_m.clone();
+    let max_range = ranges.iter().cloned().fold(0.0, f64::max) + 50.0;
 
-    let rows = res.rows.into_iter().map(|r| JsPointMassRow {
-        range_m: r.range_m,
-        tof_s: r.tof_s,
-        impact_vel_ms: r.impact_vel_ms,
-        drop_m: r.drop_m,
-        hold_mil: r.hold_mil,
-        hold_moa: r.hold_moa,
-        drift_m: r.drift_m,
-    }).collect();
+    let drag: &'static pm::DragFn = select_drag(&inp.drag_model);
 
-    swb::to_value(&JsPointMassResult { rows }).map_err(|e| e.into())
+    let inputs = pm::Inputs {
+        bc: inp.bc,
+        muzzle_velocity: inp.muzzle_velocity_ms,
+        sight_height_cm: 3.5,          // default (can surface to JS later)
+        zero_distance_m: inp.zero_m,
+        env: env_pm,
+        wind_speed: inp.wind_speed_ms,
+        wind_angle_deg: inp.wind_angle_deg,
+        dt: 0.002,                     // default integ step
+        max_range_m: max_range,
+        drag_fn: drag,
+    };
+
+    let rows = pm::solve_table_at_ranges(&inputs, &ranges);
+
+    let out = JsPointMassResult {
+        rows: rows
+            .into_iter()
+            .map(|r| JsPointMassRow {
+                range_m: r.range_m,
+                tof_s: r.tof,
+                impact_vel_ms: r.impact_velocity,
+                drop_m: r.drop_m,
+                hold_mil: r.hold_mil,
+                hold_moa: r.hold_moa,
+                drift_m: r.drift_m,
+            })
+            .collect(),
+    };
+
+    swb::to_value(&out).map_err(|e| e.into())
 }
 
-// ---------- 6DoF wrapper (new) ----------
+/* -------------------------------- 6DoF --------------------------------- */
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct JsSixProjectile {
     pub mass_kg: f64,
     pub diameter_m: f64,
     pub length_m: f64,
-    /// Spin rate about body x [rev/s]; friendlier to users. Converted to rad/s.
+    /// Spin rate about body x [rev/s]
     pub spin_rps: f64,
 }
 
@@ -156,14 +177,16 @@ pub struct JsSixResult {
 
 /// Integrate 6DoF with the built-in `DefaultAeroApprox`.
 #[wasm_bindgen]
-pub fn integrate_6dof_default(env_js: JsValue,
-                              proj_js: JsValue,
-                              init_js: JsValue,
-                              opts_js: JsValue) -> Result<JsValue, JsValue> {
-    let env_in: JsEnvironment = swb::from_value(env_js)?;
+pub fn integrate_6dof_default(
+    env_js: JsValue,
+    proj_js: JsValue,
+    init_js: JsValue,
+    opts_js: JsValue,
+) -> Result<JsValue, JsValue> {
+    let env_in: JsEnvironment   = swb::from_value(env_js)?;
     let proj_in: JsSixProjectile = swb::from_value(proj_js)?;
-    let init_in: JsSixInit = swb::from_value(init_js)?;
-    let opts_in: JsSixOpts = swb::from_value(opts_js)?;
+    let init_in: JsSixInit       = swb::from_value(init_js)?;
+    let opts_in: JsSixOpts       = swb::from_value(opts_js)?;
 
     let env: Environment = env_in.into();
     let atmos = Atmosphere::standard();
@@ -173,7 +196,7 @@ pub fn integrate_6dof_default(env_js: JsValue,
         proj_in.mass_kg,
         proj_in.diameter_m,
         proj_in.length_m,
-        proj_in.spin_rps * std::f64::consts::TAU, // rps -> rad/s
+        proj_in.spin_rps * (2.0 * std::f64::consts::PI), // rps -> rad/s
     );
 
     let init = initial_state_from_muzzle(
@@ -194,11 +217,14 @@ pub fn integrate_6dof_default(env_js: JsValue,
     let aero = DefaultAeroApprox;
     let traj = integrate_6dof(proj, env, gravity, atmos, &aero, init, opts);
 
-    let samples: Vec<JsSixSample> = traj.into_iter().map(|s| JsSixSample {
-        t: s.t,
-        x: s.state.r.x, y: s.state.r.y, z: s.state.r.z,
-        vx: s.state.v.x, vy: s.state.v.y, vz: s.state.v.z,
-    }).collect();
+    let samples: Vec<JsSixSample> = traj
+        .into_iter()
+        .map(|s| JsSixSample {
+            t: s.t,
+            x: s.state.r.x, y: s.state.r.y, z: s.state.r.z,
+            vx: s.state.v.x, vy: s.state.v.y, vz: s.state.v.z,
+        })
+        .collect();
 
     swb::to_value(&JsSixResult { samples }).map_err(|e| e.into())
 }
