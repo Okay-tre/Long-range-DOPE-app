@@ -193,12 +193,11 @@ pub fn integrate_6dof_default(
 
     // 6DoF environment/gravity/atmos (from 6dof crate re-exports)
     let env = SixEnv {
-        temperature_c: env_in.temperature_c,
-        pressure_hpa:  env_in.pressure_hpa,
-        humidity_pct:  env_in.humidity_pct,
-        altitude_m:    env_in.altitude_m,
+    temperature_c: env_in.temperature_c,
+    pressure_hpa:  env_in.pressure_hpa,
+    humidity_pct:  env_in.humidity_pct,
     };
-    let atmos   = SixAtmos::standard();
+    let atmos   = SixAtmos {};            // no ::standard(); construct directly
     let gravity = SixGravity { g: -9.80665 };
 
     let proj = projectile_cylindrical(
