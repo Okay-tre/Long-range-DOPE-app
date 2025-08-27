@@ -6,7 +6,7 @@ members = [
   "crates/ballistics-pointmass",
   "crates/ballistics-6dof",
   "crates/ballistics-ffi-wasm",
-  "crates/ballistics-ffi-node",
+  # "crates/ballistics-ffi-node", # uncomment only after this crate exists
 ]
 # Non-crates (e.g., data/, packages/) are naturally ignored.
 
@@ -38,10 +38,3 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = "debuginfo"
-
-[lints.rust]
-# Workspace-wide hygiene (tweak as you like)
-unsafe_code = "forbid"
-
-[lints.clippy]
-pedantic = { level = "warn", priority = -1 }
