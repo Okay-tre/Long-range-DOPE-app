@@ -1,0 +1,29 @@
+[package]
+name = "ballistics-pointmass"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Point-mass ballistic solver using G1/G7 drag models and shared core utilities."
+repository = "https://example.com/your/repo" # optional, update/remove
+authors = ["You <you@example.com>"]         # optional, update/remove
+readme = false
+
+[lib]
+name = "ballistics_pointmass"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+ballistics-core   = { path = "../ballistics-core" }
+ballistics-models = { path = "../ballistics-models" }
+
+# Useful, lightweight deps (keep if you'll serialize results or do tiny vectors)
+serde = { version = "1", features = ["derive"], optional = true }
+glam  = { version = "0.27", default-features = false, features = ["std"], optional = true }
+
+[features]
+default = []
+# Enable if you want JSON (de)serialization of inputs/outputs
+serde = ["dep:serde", "ballistics-core/serde", "ballistics-models/serde"]
+# Enable tiny vector math helpers if you prefer (optional)
+vecmath = ["dep:glam"]
