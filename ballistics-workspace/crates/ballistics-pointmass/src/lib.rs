@@ -17,7 +17,7 @@
 //! You can pass any drag function. If you depend on `ballistics-models`,
 //! call this crate with `|m| ballistics_models::g7_retardation(m)` etc.
 
-use core::f64::consts::PI;
+use core::fmt; // <-- for manual Debug
 
 /// Default sea-level density for scaling (kg/m^3)
 const RHO0: f64 = 1.225;
@@ -70,7 +70,7 @@ impl Atmos {
 }
 
 /// Inputs for the solver
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Inputs<'a> {
     pub bc: f64,                  // ballistic coefficient (G1 or G7 consistent with your drag fn)
     pub muzzle_velocity: f64,     // m/s
@@ -82,6 +82,24 @@ pub struct Inputs<'a> {
     pub dt: f64,                  // integration time step (s) e.g., 0.001..0.003
     pub max_range_m: f64,         // stop when x reaches this
     pub drag_fn: &'a DragFn,      // i(M)
+}
+
+// Manual Debug because `&DragFn` (trait object) doesn't implement Debug.
+impl<'a> fmt::Debug for Inputs<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Inputs")
+            .field("bc", &self.bc)
+            .field("muzzle_velocity", &self.muzzle_velocity)
+            .field("sight_height_cm", &self.sight_height_cm)
+            .field("zero_distance_m", &self.zero_distance_m)
+            .field("env", &self.env)
+            .field("wind_speed", &self.wind_speed)
+            .field("wind_angle_deg", &self.wind_angle_deg)
+            .field("dt", &self.dt)
+            .field("max_range_m", &self.max_range_m)
+            .field("drag_fn", &"<fn>")
+            .finish()
+    }
 }
 
 /// A row of output sampled at a requested range
