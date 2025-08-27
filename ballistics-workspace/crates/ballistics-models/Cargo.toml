@@ -1,0 +1,22 @@
+[package]
+name = "ballistics-models"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Drag models and aero tables (G1/G7, etc.) for the ballistics workspace."
+repository = ""
+readme = false
+categories = ["science", "aerospace", "no-std"]
+keywords = ["ballistics", "drag", "G1", "G7"]
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+# Enable serde for (de)serializing tables or precomputed curves
+with-serde = ["dep:serde"]
+
+[dependencies]
+thiserror = "1"
+# Optional: only if/when you want to (de)serialize tables
+serde = { version = "1", features = ["derive"], optional = true }
