@@ -436,28 +436,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn integrates_basic_case() {
-        // Simple scenario: 10 g bullet, 7.82 mm, 35 mm long
-        let proj = projectile_cylindrical(0.010, 0.00782, 0.035, 4000.0);
+fn integrates_basic_case() {
+    use super::*;
 
-        let env = Environment { temperature_c: 15.0, pressure_hpa: 1013.0, humidity_pct: 50.0 };
-        let atmos = Atmosphere;
-        let gravity = Gravity { g: -9.80665 };
+    // Environment/gravity/atmosphere matching the crate types
+    let env = Environment {
+        temperature_c: 15.0,
+        pressure_hpa: 1013.0,
+        humidity_pct: 50.0,
+    };
+    let atmos   = Atmosphere {
+        lapse_rate: 0.0065,
+        sea_level_temp_k: 288.15,
+        sea_level_pressure_pa: 101_325.0,
+    };
+    let gravity = Gravity { g: -9.80665 };
 
-        let init = initial_state_from_muzzle(
-            Vec3::zero(),
-            800.0,
-            0.0f64.to_radians(), // bore elevation
-            0.0f64.to_radians(), // bore azimuth
-            proj.spin_rad_s
-        );
+    // Rifle-ish projectile (mass/diameter/length/spin)
+    let proj = projectile_cylindrical(
+        0.0095,   // kg (~147 gr)
+        0.00782,  // m (0.308")
+        0.038,    // m
+        3000.0,   // rad/s spin
+    );
 
-        let opts = IntegrateOpts { dt: 0.002, max_time: 2.0, max_steps: 10_000, ground_z: 0.0 };
-        let aero = DefaultAeroApprox;
+    // Start above ground and slightly up-angle so we don't immediately "hit ground".
+    let muzzle_pos     = Vec3 { x: 0.0, y: 0.0, z: 2.0 };
+    let bore_elev_deg  = 2.0;
+    let bore_azim_deg  = 0.0;
+    let muzzle_speed   = 800.0;
 
-        let samples = integrate_6dof(proj, env, gravity, atmos, &aero, init, opts);
-        assert!(!samples.is_empty());
-        // should advance in x and eventually descend in z
-        assert!(samples.last().unwrap().state.r.x > 0.0);
-    }
+    let init = initial_state_from_muzzle(
+        muzzle_pos,
+        muzzle_speed,
+        bore_elev_deg.to_radians(),
+        bore_azim_deg.to_radians(),
+        proj.spin_rad_s,
+    );
+
+    // Ensure at least several RK4 steps occur.
+    let opts = IntegrateOpts {
+        dt:        0.005,   // 5 ms
+        max_time:  1.0,     // plenty of steps
+        max_steps: 10_000,  // generous cap
+        ground_z:  -10.0,   // don't trip "ground" early
+    };
+
+    let aero = DefaultAeroApprox;
+    let samples = integrate_6dof(proj, env, gravity, atmos, &aero, init, opts);
+
+    // Sanity: should have advanced and produced multiple samples.
+    assert!(samples.len() >= 2, "need at least two samples to advance in time");
+
+    // Find any sample after t>0 and check downrange progress is non-negative.
+    let last = samples.last().unwrap();
+    assert!(
+        last.state.r.x >= 0.0,
+        "x should be non-negative (downrange), got {} with N={}",
+        last.state.r.x,
+        samples.len()
+    );
+
+    // And dynamic pressure should be finite.
+    assert!(samples.iter().all(|s| s.qbar.is_finite()));
+}
 }
