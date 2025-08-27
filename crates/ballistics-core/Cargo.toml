@@ -1,0 +1,28 @@
+# crates/ballistics-core/Cargo.toml
+
+[package]
+name = "ballistics-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Core math, units, atmosphere, and coriolis utilities for the ballistics workspace."
+repository = "https://github.com/your/repo" # adjust later if public
+authors = ["Your Name <you@example.com>"]
+
+[dependencies]
+# Inherit common deps from workspace
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+thiserror   = { workspace = true }
+anyhow      = { workspace = true }
+
+nalgebra    = { workspace = true }
+approx      = { workspace = true }
+uom         = { workspace = true }
+
+# Optional: fast float formatting if needed
+ryu         = { workspace = true }
+
+[dev-dependencies]
+# testing helpers
+serde_json = { workspace = true }
