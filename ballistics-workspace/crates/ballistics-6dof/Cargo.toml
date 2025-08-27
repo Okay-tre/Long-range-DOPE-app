@@ -1,0 +1,13 @@
+[package]
+name = "ballistics-6dof"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Rigid-body 6DoF bullet flight solver (trans+rot) with quaternion attitude, aero forces & moments."
+repository = "https://example.com/your/repo"
+authors = ["Your Name <you@example.com>"]
+
+[dependencies]
+ballistics-core = { path = "../ballistics-core", version = "0.1.0" }
+# Small math helpers (optional, we’ll keep it minimal and stay std-only unless needed)
+# If you later want glam/nalgebra, you can add them. For now we stick to simple arrays.
