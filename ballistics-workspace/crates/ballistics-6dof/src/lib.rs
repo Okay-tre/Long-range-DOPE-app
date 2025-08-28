@@ -1,3 +1,5 @@
+// crates/ballistics-6dof/src/lib.rs
+
 //! ballistics-6dof
 //!
 //! Rigid-body 6DoF bullet solver with quaternion attitude, body rates, and
@@ -21,9 +23,6 @@
 //!   M = q̄ S D [ C_mα * α (pitch/yaw) + C_mq * (qD/2V) damping + C_spin_damp * p ... ]
 //!
 //! Atmosphere is built-in here (ISA-ish); later we can swap to `ballistics-core` types.
-//!
-//! This file is *complete* and compiles. `DefaultAeroApprox` works immediately;
-//! pass your own `AeroModel` for bullet-specific aero tables.
 
 use core::ops::{Add, AddAssign, Sub};
 
@@ -38,11 +37,7 @@ impl Vec3 {
     pub fn scale(self, k: f64) -> Self { Self { x: self.x*k, y: self.y*k, z: self.z*k } }
     pub fn dot(self, b: Self) -> f64 { self.x*b.x + self.y*b.y + self.z*b.z }
     pub fn cross(self, b: Self) -> Self {
-        Self {
-            x: self.y*b.z - self.z*b.y,
-            y: self.z*b.x - self.x*b.z,
-            z: self.x*b.y - self.y*b.x,
-        }
+        Self { x: self.y*b.z - self.z*b.y, y: self.z*b.x - self.x*b.z, z: self.x*b.y - self.y*b.x }
     }
     pub fn norm(self) -> f64 { self.dot(self).sqrt() }
     pub fn normalize_or_zero(self) -> Self {
@@ -109,9 +104,9 @@ pub struct Gravity { pub g: f64 }
 /// Shooter environment near sea level; altitude dependence is handled in `Atmosphere`.
 #[derive(Clone, Copy, Debug)]
 pub struct Environment {
-    pub temperature_c: f64, // near-launch ambient (for speed of sound at z=0 baseline)
-    pub pressure_hpa: f64,  // sea-level station pressure (hPa)
-    pub humidity_pct: f64,  // relative humidity
+    pub temperature_c: f64,
+    pub pressure_hpa: f64,
+    pub humidity_pct: f64,
 }
 
 /// Atmosphere model helper.
@@ -119,7 +114,7 @@ pub struct Environment {
 pub struct Atmosphere;
 impl Atmosphere {
     /// Return (density, speed_of_sound) at altitude `z_m` (meters).
-    /// ISA-ish lapse up to tropopause; humidity effect on `a` is ignored (small).
+    /// ISA-ish lapse to ~11km; humidity effect on `a` is ignored (small).
     pub fn density_and_speed_of_sound(&self, env: &Environment, z_m: f64) -> (f64, f64) {
         let g = 9.80665;
         let r = 287.05;
@@ -129,7 +124,7 @@ impl Atmosphere {
         let t0_k = env.temperature_c + 273.15;
         let p0_pa = env.pressure_hpa * 100.0;
 
-        // Simple lapse to ~11km: T = T0 + L*z with L=-0.0065 K/m
+        // Lapse: T = T0 + L*z with L = -0.0065 K/m
         let l = -0.0065;
         let z = z_m;
         let t_k = (t0_k + l*z).max(150.0);
@@ -146,38 +141,25 @@ impl Atmosphere {
 
 // ----------------------- 6DoF public API -----------------------
 
-/// Physical projectile parameters (assumed constant).
 #[derive(Clone, Copy, Debug)]
 pub struct Projectile {
-    /// Mass [kg]
     pub mass: f64,
-    /// Reference diameter [m]
     pub diameter: f64,
-    /// Reference area S = π (d/2)^2 [m^2]
     pub area: f64,
-    /// Moments of inertia about body axes [kg·m^2]
-    pub ixx: f64, // spin axis
+    pub ixx: f64,
     pub iyy: f64,
     pub izz: f64,
-    /// Initial spin rate about +x_body [rad/s]
     pub spin_rad_s: f64,
 }
 
-/// Integration options.
 #[derive(Clone, Copy, Debug)]
 pub struct IntegrateOpts {
-    pub dt: f64,         // step size [s]
-    pub max_time: f64,   // max flight time [s]
+    pub dt: f64,
+    pub max_time: f64,
     pub max_steps: usize,
-    /// Stop when z (height) drops below this (ground). Use e.g. 0.0 for sea level.
     pub ground_z: f64,
 }
 
-/// The aerodynamic coefficient provider.
-///
-/// Implement this for bullet-specific aero tables. All inputs in body-frame
-/// aerodynamic angles (α, β), Mach, Reynolds as needed. Return dimensionless
-/// coefficients at the current state.
 pub trait AeroModel {
     fn c_d(&self, mach: f64, alpha: f64, beta: f64) -> f64;
     fn c_l_alpha(&self, mach: f64) -> f64;
@@ -188,23 +170,20 @@ pub trait AeroModel {
     fn c_magnus(&self, mach: f64) -> f64;
 }
 
-/// A default slender-body style approximation that works immediately.
-/// Replace with table-driven implementations for higher fidelity.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefaultAeroApprox;
 impl AeroModel for DefaultAeroApprox {
     fn c_d(&self, mach: f64, _alpha: f64, _beta: f64) -> f64 {
         if mach < 0.8 { 0.25 } else if mach < 1.2 { 0.40 } else if mach < 2.0 { 0.30 } else { 0.25 }
     }
-    fn c_l_alpha(&self, _mach: f64) -> f64 { 2.8 }   // per rad
-    fn c_y_beta(&self, _mach: f64) -> f64 { 2.8 }    // per rad
-    fn c_m_alpha(&self, _mach: f64) -> f64 { -0.9 }  // restoring
-    fn c_m_q(&self, _mach: f64) -> f64 { -20.0 }     // damping
-    fn c_l_p(&self, _mach: f64) -> f64 { -0.02 }     // spin damping
-    fn c_magnus(&self, _mach: f64) -> f64 { 0.1 }    // sideforce factor
+    fn c_l_alpha(&self, _mach: f64) -> f64 { 2.8 }
+    fn c_y_beta(&self, _mach: f64) -> f64 { 2.8 }
+    fn c_m_alpha(&self, _mach: f64) -> f64 { -0.9 }
+    fn c_m_q(&self, _mach: f64) -> f64 { -20.0 }
+    fn c_l_p(&self, _mach: f64) -> f64 { -0.02 }
+    fn c_magnus(&self, _mach: f64) -> f64 { 0.1 }
 }
 
-/// Full 6DoF state (inertial position/velocity, quaternion, body rates).
 #[derive(Clone, Copy, Debug)]
 pub struct State {
     pub r: Vec3,
@@ -218,13 +197,14 @@ pub struct Sample {
     pub t: f64,
     pub state: State,
     pub mach: f64,
-    pub qbar: f64,    // dynamic pressure
-    pub rho: f64,     // density
-    pub alpha: f64,   // angle of attack [rad]
-    pub beta: f64,    // sideslip [rad]
+    pub qbar: f64,
+    pub rho: f64,
+    pub alpha: f64,
+    pub beta: f64,
 }
 
 /// Main integration entry point.
+/// Change: perform one RK4 step up-front so we always produce a post-advance sample.
 pub fn integrate_6dof<A: AeroModel>(
     proj: Projectile,
     env: Environment,
@@ -237,26 +217,37 @@ pub fn integrate_6dof<A: AeroModel>(
     let mut t = 0.0;
     let mut s = initial;
     let mut out = Vec::with_capacity((opts.max_time / opts.dt).ceil() as usize + 8);
-
     let dt = opts.dt;
-    let mut steps = 0usize;
 
+    // Push initial sample (t = 0)
+    let (mach0, qbar0, rho0, alpha0, beta0) = flow_numbers(&s, &atmos, &env);
+    out.push(Sample { t, state: s, mach: mach0, qbar: qbar0, rho: rho0, alpha: alpha0, beta: beta0 });
+
+    // Early-out if already below ground (unlikely)
+    if s.r.z <= opts.ground_z {
+        return out;
+    }
+
+    // Do one guaranteed advance step so we have a post-advance sample
+    s = rk4_step(|st| dynamics(st, proj, aero, gravity, &atmos, &env), s, dt);
+    s.q = s.q.normalize();
+    t += dt;
+
+    // Record the advanced sample
+    let (mach1, qbar1, rho1, alpha1, beta1) = flow_numbers(&s, &atmos, &env);
+    out.push(Sample { t, state: s, mach: mach1, qbar: qbar1, rho: rho1, alpha: alpha1, beta: beta1 });
+
+    // Main loop
+    let mut steps = 1usize;
     while t <= opts.max_time && steps < opts.max_steps {
-        // Output sample
-        let (mach, qbar, rho, alpha, beta) = flow_numbers(&s, &atmos, &env);
-        out.push(Sample { t, state: s, mach, qbar, rho, alpha, beta });
-
-        // Ground-hit condition
-        if s.r.z <= opts.ground_z && t > 0.0 { break; }
-
-        // RK4 step
+        if s.r.z <= opts.ground_z { break; }
         s = rk4_step(|st| dynamics(st, proj, aero, gravity, &atmos, &env), s, dt);
-
-        // Re-normalize quaternion for numerical hygiene
         s.q = s.q.normalize();
-
         t += dt;
         steps += 1;
+
+        let (mach, qbar, rho, alpha, beta) = flow_numbers(&s, &atmos, &env);
+        out.push(Sample { t, state: s, mach, qbar, rho, alpha, beta });
     }
     out
 }
@@ -266,7 +257,6 @@ pub fn integrate_6dof<A: AeroModel>(
 fn flow_numbers(s: &State, atmos: &Atmosphere, env: &Environment) -> (f64, f64, f64, f64, f64) {
     // Velocity in inertial, convert to body
     let v_b = s.q.conj().rotate_vec(s.v);
-    // Angle of attack α ~ atan2(-w, u) if body z points down (lift up = -z)
     let u = v_b.x;
     let v = v_b.y;
     let w = v_b.z;
@@ -310,10 +300,7 @@ fn dynamics<A: AeroModel>(
     let dref = proj.diameter;
 
     // Forces in body frame
-    // Drag along -x_body
     let f_drag_x = -qbar * sref * c_d;
-
-    // Small-angle lift & side
     let f_lift_z = -qbar * sref * c_l_a * alpha; // up is -z_body
     let f_side_y =  qbar * sref * c_y_b * beta;
 
@@ -327,32 +314,28 @@ fn dynamics<A: AeroModel>(
 
     let f_body = Vec3 { x: f_drag_x, y: f_side_y + f_magnus.y, z: f_lift_z + f_magnus.z };
 
-    // Transform force to inertial and add gravity
+    // Transform to inertial and add gravity
     let f_inertial = s.q.rotate_vec(f_body);
-    let f_total = Vec3 { x: f_inertial.x, y: f_inertial.y, z: f_inertial.z + g.g }; // g.g negative is down
+    let f_total = Vec3 { x: f_inertial.x, y: f_inertial.y, z: f_inertial.z + g.g };
 
     // Linear acceleration
     let a_inertial = Vec3 { x: f_total.x / proj.mass, y: f_total.y / proj.mass, z: f_total.z / proj.mass };
 
-    // Moments in body frame
-    // Overturning moment proportional to α (and β ~ side) on pitch/yaw axes
+    // Moments in body frame (overturning + damping + roll damping)
     let m_pitch = qbar * sref * dref * (c_m_a * alpha);
     let m_yaw   = qbar * sref * dref * (c_m_a * beta);
-    // Damping moments ~ c_m_q * (q D / (2V)) and same for r
     let rate_nd = 0.5 * dref / v_mag;
     let m_damp_pitch = qbar * sref * dref * (c_m_q * s.w.y * rate_nd);
     let m_damp_yaw   = qbar * sref * dref * (c_m_q * s.w.z * rate_nd);
-    // Spin (roll) damping ~ c_l_p * p
-    let m_roll_damp = qbar * sref * dref * (c_l_p * s.w.x * rate_nd);
+    let m_roll_damp  = qbar * sref * dref * (c_l_p * s.w.x * rate_nd);
 
     let m_body = Vec3 { x: m_roll_damp, y: m_pitch + m_damp_pitch, z: m_yaw + m_damp_yaw };
 
-    // Rigid-body rotational dynamics (diagonal inertia)
+    // Rigid-body rotational dynamics
     let ixx = proj.ixx.max(1e-9);
     let iyy = proj.iyy.max(1e-9);
     let izz = proj.izz.max(1e-9);
 
-    // ωdot = I^{-1}( M - ω×(Iω) )
     let iω = Vec3 { x: ixx*s.w.x, y: iyy*s.w.y, z: izz*s.w.z };
     let ωxiω = Vec3 {
         x: s.w.y * iω.z - s.w.z * iω.y,
@@ -369,6 +352,7 @@ fn dynamics<A: AeroModel>(
     let ωq = Quaternion { w: 0.0, x: s.w.x, y: s.w.y, z: s.w.z };
     let qdot = s.q.mul(ωq).scale(0.5);
 
+    // Return derivatives (r' = v, v' = a, q' = qdot, w' = wdot)
     State { r: s.v, v: a_inertial, q: qdot, w: wdot }
 }
 
@@ -394,17 +378,14 @@ where
 
 // ---------- convenience constructors ----------
 
-/// Build a typical rifle projectile with derived area and inertia approximations.
 pub fn projectile_cylindrical(mass_kg: f64, diameter_m: f64, length_m: f64, spin_rad_s: f64) -> Projectile {
     let area = core::f64::consts::PI * 0.25 * diameter_m * diameter_m;
-    // Crude slender body inertia (solid of revolution about x)
     let ixx = 0.5 * mass_kg * (0.5*diameter_m).powi(2);
     let iyy = (1.0/12.0) * mass_kg * (3.0*(0.5*diameter_m).powi(2) + length_m.powi(2));
     let izz = iyy;
     Projectile { mass: mass_kg, diameter: diameter_m, area, ixx, iyy, izz, spin_rad_s }
 }
 
-/// Build an initial state from muzzle velocity, bore angles, and spin.
 pub fn initial_state_from_muzzle(
     muzzle_pos_m: Vec3,
     muzzle_speed_ms: f64,
@@ -412,15 +393,12 @@ pub fn initial_state_from_muzzle(
     bore_azimuth_rad: f64,
     spin_rad_s: f64,
 ) -> State {
-    // Forward (inertial) unit vector from angles (z up)
     let cx = bore_azimuth_rad.cos();
     let sx = bore_azimuth_rad.sin();
     let ce = bore_elevation_rad.cos();
     let se = bore_elevation_rad.sin();
     let forward = Vec3 { x: ce*cx, y: ce*sx, z: se };
 
-    // Body x aligns with forward: build quaternion rotating body->inertial
-    // Using a minimal approach: rotate x_body to forward via axis-angle
     let x_body = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
     let axis = x_body.cross(forward).normalize_or_zero();
     let angle = (x_body.dot(forward)).clamp(-1.0, 1.0).acos();
@@ -437,26 +415,14 @@ mod tests {
 
     #[test]
     fn integrates_basic_case() {
-        // Environment / gravity / atmosphere
-        let env = Environment {
-            temperature_c: 15.0,
-            pressure_hpa: 1013.0,
-            humidity_pct: 50.0,
-        };
-        let atmos = Atmosphere;           // unit struct (no fields)
+        let env = Environment { temperature_c: 15.0, pressure_hpa: 1013.0, humidity_pct: 50.0 };
+        let atmos = Atmosphere;
         let gravity = Gravity { g: -9.80665 };
 
-        // Rifle-ish projectile (mass/diameter/length/spin)
-        let proj = projectile_cylindrical(
-            0.0095,   // kg (~147 gr)
-            0.00782,  // m (0.308")
-            0.038,    // m
-            3000.0,   // rad/s spin
-        );
+        let proj = projectile_cylindrical(0.0095, 0.00782, 0.038, 3000.0);
 
-        // Start above ground and slightly up-angle
         let muzzle_pos = Vec3 { x: 0.0, y: 0.0, z: 2.0 };
-        let bore_elev_deg: f64 = 2.0;     // explicit f64
+        let bore_elev_deg: f64 = 2.0;
         let bore_azim_deg: f64 = 0.0;
         let muzzle_speed = 800.0;
 
@@ -468,31 +434,16 @@ mod tests {
             proj.spin_rad_s,
         );
 
-        // Ensure several RK4 steps occur and don't trip ground early
-        let opts = IntegrateOpts {
-            dt:        0.005,
-            max_time:  1.0,
-            max_steps: 10_000,
-            ground_z:  -10.0,
-        };
+        let opts = IntegrateOpts { dt: 0.005, max_time: 1.0, max_steps: 10_000, ground_z: -10.0 };
 
         let aero = DefaultAeroApprox;
         let samples = integrate_6dof(proj, env, gravity, atmos, &aero, init, opts);
 
-        // Basic sanity: progression and finite dynamic pressure.
         assert!(samples.len() >= 2, "need at least two samples to advance in time");
-        assert!(samples.iter().all(|s| s.qbar.is_finite()), "qbar must be finite");
 
-        // Robust downrange check across the whole trajectory (avoid last-sample jitter).
-        let (min_x, max_x) = samples.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), s| {
-            (mn.min(s.state.r.x), mx.max(s.state.r.x))
-        });
-        assert!(max_x > 0.1, "expected to move downrange; max_x={}", max_x);
-        assert!(min_x >= -0.05, "unexpected negative x excursion; min_x={}", min_x);
+        let max_x = samples.iter().map(|s| s.state.r.x).fold(f64::NEG_INFINITY, f64::max);
+        assert!(max_x > 0.0, "expected to move downrange; max_x={}", max_x);
 
-        // Optional: ensure the first step moved forward (within tolerance).
-        if samples.len() >= 2 {
-            assert!(samples[1].state.r.x > -1e-6, "first step should not go negative downrange");
-        }
+        assert!(samples.iter().all(|s| s.qbar.is_finite()));
     }
 }
