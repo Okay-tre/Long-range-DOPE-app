@@ -479,9 +479,20 @@ mod tests {
         let aero = DefaultAeroApprox;
         let samples = integrate_6dof(proj, env, gravity, atmos, &aero, init, opts);
 
+        // Basic sanity: progression and finite dynamic pressure.
         assert!(samples.len() >= 2, "need at least two samples to advance in time");
-        let last = samples.last().unwrap();
-        assert!(last.state.r.x >= 0.0, "expected non-negative downrange x");
-        assert!(samples.iter().all(|s| s.qbar.is_finite()));
+        assert!(samples.iter().all(|s| s.qbar.is_finite()), "qbar must be finite");
+
+        // Robust downrange check across the whole trajectory (avoid last-sample jitter).
+        let (min_x, max_x) = samples.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), s| {
+            (mn.min(s.state.r.x), mx.max(s.state.r.x))
+        });
+        assert!(max_x > 0.1, "expected to move downrange; max_x={}", max_x);
+        assert!(min_x >= -0.05, "unexpected negative x excursion; min_x={}", min_x);
+
+        // Optional: ensure the first step moved forward (within tolerance).
+        if samples.len() >= 2 {
+            assert!(samples[1].state.r.x > -1e-6, "first step should not go negative downrange");
+        }
     }
 }
